@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iisidsd live feed</title>
+  <style>
+    :root { color-scheme: dark; font-family: Segoe UI, sans-serif; }
+    body { margin: 0; background: #111827; color: #e5e7eb; }
+    header { padding: 18px 24px; background: #1f2937; display: flex; align-items: center; gap: 24px; }
+    h1 { margin: 0; font-size: 21px; }
+    .status { color: #86efac; font-size: 13px; }
+    label { margin-left: auto; font-size: 14px; }
+    input { margin-right: 8px; }
+    nav { display: flex; gap: 6px; padding: 12px 24px 0; overflow-x: auto; }
+    button { border: 0; border-radius: 5px 5px 0 0; padding: 9px 14px; background: #374151; color: #d1d5db; cursor: pointer; }
+    button.active { background: #2563eb; color: white; }
+    main { padding: 0 24px 24px; }
+    .table-wrap { overflow: auto; background: #1f2937; border-radius: 0 6px 6px 6px; }
+    table { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: 13px; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid #374151; text-align: left; }
+    th { color: #9ca3af; font-weight: 600; position: sticky; top: 0; background: #1f2937; }
+    tr.suspicious { background: #451a1a; }
+    .empty { padding: 30px; color: #9ca3af; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>iisidsd live ETW feed</h1>
+    <span class="status" id="status">Connecting...</span>
+    <label><input id="all-events" type="checkbox">Show all events</label>
+  </header>
+  <nav id="domains"><button class="active" data-domain="*">All domains</button></nav>
+  <main>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Domain</th><th>Client</th><th>Method</th><th>Path</th><th>Status</th><th>Risk</th><th>Detection</th></tr></thead>
+        <tbody id="events"><tr><td colspan="8" class="empty">Waiting for ETW events...</td></tr></tbody>
+      </table>
+    </div>
+  </main>
+<script>
+  const events = [];
+  let selectedDomain = '*';
+  const allEvents = document.querySelector('#all-events');
+  const body = document.querySelector('#events');
+  const status = document.querySelector('#status');
+  const domains = document.querySelector('#domains');
+
+  function visible(e) {
+    return (allEvents.checked || e.isSuspicious) && (selectedDomain === '*' || e.domain === selectedDomain);
+  }
+  function text(value) { return document.createTextNode(value ?? ''); }
+  function render() {
+    body.replaceChildren();
+    const visibleEvents = events.filter(visible).slice(-500).reverse();
+    if (!visibleEvents.length) {
+      const row = document.createElement('tr'); const cell = document.createElement('td');
+      cell.colSpan = 8; cell.className = 'empty'; cell.append(text(allEvents.checked ? 'No events received.' : 'No suspicious events received.'));
+      row.append(cell); body.append(row); return;
+    }
+    for (const e of visibleEvents) {
+      const row = document.createElement('tr'); if (e.isSuspicious) row.className = 'suspicious';
+      [new Date(e.timestamp).toLocaleString(), e.domain, e.clientIp, e.method, e.path, e.statusCode, `${e.riskScore ?? 0} (${e.riskSeverity ?? 'Low'})`, e.detectionReason || ''].forEach(v => { const cell = document.createElement('td'); cell.append(text(String(v ?? ''))); row.append(cell); });
+      body.append(row);
+    }
+  }
+  function addEvent(e) {
+    if (!events.some(existing => existing.id === e.id)) events.push(e);
+    const domainNames = new Set(events.map(e => e.domain).filter(Boolean));
+    for (const domain of domainNames) {
+      if (!document.querySelector(`button[data-domain="${CSS.escape(domain)}"]`)) {
+        const button = document.createElement('button'); button.dataset.domain = domain; button.append(text(domain));
+        button.onclick = () => { selectedDomain = domain; document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b === button)); render(); };
+        domains.append(button);
+      }
+    }
+    render();
+  }
+  allEvents.onchange = render;
+  fetch('/api/events?limit=1000').then(r => r.json()).then(items => { items.reverse().forEach(addEvent); status.textContent = 'Connected'; }).catch(() => status.textContent = 'API unavailable');
+  const stream = new EventSource('/api/events/stream');
+  stream.addEventListener('etw', e => { status.textContent = 'Live'; addEvent(JSON.parse(e.data)); });
+  stream.onerror = () => status.textContent = 'Reconnecting...';
+  document.querySelector('[data-domain="*"]').onclick = () => { selectedDomain = '*'; document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.domain === '*')); render(); };
+</script>
+</body>
+</html>
