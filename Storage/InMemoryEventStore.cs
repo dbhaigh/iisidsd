@@ -13,12 +13,18 @@ public sealed class InMemoryEventStore(IOptions<IisEtwOptions> options) : IEvent
     private readonly Lock _sync = new();
     private readonly ConcurrentDictionary<Guid, Channel<SecurityEvent>> _subscribers = [];
 
-    public IReadOnlyList<SecurityEvent> GetRecent(int limit)
+    public IReadOnlyList<SecurityEvent> GetRecent(int limit, string? clientIp = null, string? domain = null, bool suspiciousOnly = false)
     {
         limit = Math.Clamp(limit, 1, _options.RetentionLimit);
         lock (_sync)
         {
-            return _events.Reverse().Take(limit).ToArray();
+            return _events
+                .Reverse()
+                .Where(webEvent => clientIp is null || string.Equals(webEvent.ClientIp, clientIp, StringComparison.OrdinalIgnoreCase))
+                .Where(webEvent => domain is null || string.Equals(webEvent.Domain, domain, StringComparison.OrdinalIgnoreCase))
+                .Where(webEvent => !suspiciousOnly || webEvent.IsSuspicious)
+                .Take(limit)
+                .ToArray();
         }
     }
 

@@ -1,3 +1,6 @@
 <Solution>
+  <Folder Name="/Tests/">
+    <Project Path="Tests/iisidsd.Tests/iisidsd.Tests.csproj" />
+  </Folder>
   <Project Path="iisidsd.csproj" />
 </Solution>

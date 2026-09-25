@@ -16,5 +16,5 @@ public sealed record SecurityEvent(
     string RiskSeverity = "Low",
     IReadOnlyList<string>? RiskIndicators = null)
 {
-    public string Id { get; } = Guid.NewGuid().ToString("N");
+    public string Id { get; init; } = Guid.NewGuid().ToString("N");
 }

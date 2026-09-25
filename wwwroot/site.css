@@ -1,0 +1,35 @@
+:root { color-scheme: dark; font-family: Segoe UI, sans-serif; }
+body { margin: 0; background: #111827; color: #e5e7eb; }
+header { padding: 18px 24px; background: #1f2937; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+h1 { margin: 0; font-size: 21px; }
+.status { color: #86efac; font-size: 13px; }
+label { margin-left: auto; font-size: 14px; }
+input { margin-right: 8px; }
+nav, .view-tabs { display: flex; gap: 6px; padding: 12px 24px 0; overflow-x: auto; }
+button { border: 0; border-radius: 5px 5px 0 0; padding: 9px 14px; background: #374151; color: #d1d5db; cursor: pointer; }
+button.active { background: #2563eb; color: white; }
+main { padding: 0 24px 24px; }
+.panel { background: #1f2937; border-radius: 0 6px 6px 6px; }
+.table-wrap { overflow: auto; }
+table { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: 13px; }
+th, td { padding: 10px 12px; border-bottom: 1px solid #374151; text-align: left; vertical-align: top; }
+th { color: #9ca3af; font-weight: 600; position: sticky; top: 0; background: #1f2937; }
+tr.suspicious { background: #451a1a; }
+tr.clickable { cursor: pointer; }
+tr.selected { background: #1e3a8a; }
+.empty { padding: 30px; color: #9ca3af; text-align: center; }
+.view { display: none; }
+.view.active { display: block; }
+.summary { padding: 16px 18px; border-bottom: 1px solid #374151; color: #d1d5db; }
+.summary strong { color: #fff; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.badge.low { background: #1f2937; color: #d1d5db; }
+.badge.medium { background: #92400e; color: #fde68a; }
+.badge.high { background: #991b1b; color: #fecaca; }
+.badge.critical { background: #7f1d1d; color: #fff; }
+.actions { display: flex; gap: 8px; align-items: center; padding: 12px 18px; border-bottom: 1px solid #374151; flex-wrap: wrap; }
+.actions button { border-radius: 6px; }
+.actions input, .actions select { margin-right: 0; border-radius: 4px; border: 1px solid #4b5563; background: #111827; color: #e5e7eb; padding: 6px 8px; }
+.actions input { width: 90px; }
+.actions span { color: #9ca3af; font-size: 13px; }
+.inline-button { border-radius: 4px; padding: 6px 10px; }
