@@ -1,0 +1,220 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0/win-x64",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {},
+    ".NETCoreApp,Version=v10.0/win-x64": {
+      "iisidsd/0.1.0": {
+        "dependencies": {
+          "Microsoft.Data.Sqlite": "10.0.0",
+          "Microsoft.Diagnostics.Tracing.TraceEvent": "3.1.28",
+          "Microsoft.Extensions.Hosting.WindowsServices": "10.0.0",
+          "SQLitePCLRaw.lib.e_sqlite3": "2.1.12-pre20260709125052",
+          "Microsoft.Web.Administration": "7.0.0.0"
+        },
+        "runtime": {
+          "iisidsd.dll": {}
+        }
+      },
+      "Microsoft.Data.Sqlite/10.0.0": {
+        "dependencies": {
+          "Microsoft.Data.Sqlite.Core": "10.0.0",
+          "SQLitePCLRaw.bundle_e_sqlite3": "2.1.11",
+          "SQLitePCLRaw.core": "2.1.11"
+        }
+      },
+      "Microsoft.Data.Sqlite.Core/10.0.0": {
+        "dependencies": {
+          "SQLitePCLRaw.core": "2.1.11"
+        },
+        "runtime": {
+          "lib/net8.0/Microsoft.Data.Sqlite.dll": {
+            "assemblyVersion": "10.0.0.0",
+            "fileVersion": "10.0.25.52411"
+          }
+        }
+      },
+      "Microsoft.Diagnostics.NETCore.Client/0.2.510501": {
+        "runtime": {
+          "lib/net6.0/Microsoft.Diagnostics.NETCore.Client.dll": {
+            "assemblyVersion": "0.2.10.10501",
+            "fileVersion": "0.2.10.10501"
+          }
+        }
+      },
+      "Microsoft.Diagnostics.Tracing.TraceEvent/3.1.28": {
+        "dependencies": {
+          "Microsoft.Diagnostics.NETCore.Client": "0.2.510501"
+        },
+        "runtime": {
+          "lib/netstandard2.0/Dia2Lib.dll": {
+            "assemblyVersion": "2.0.0.0",
+            "fileVersion": "2.0.0.0"
+          },
+          "lib/netstandard2.0/Microsoft.Diagnostics.FastSerialization.dll": {
+            "assemblyVersion": "3.1.28.0",
+            "fileVersion": "3.1.28.0"
+          },
+          "lib/netstandard2.0/Microsoft.Diagnostics.Tracing.TraceEvent.dll": {
+            "assemblyVersion": "3.1.28.0",
+            "fileVersion": "3.1.28.0"
+          },
+          "lib/netstandard2.0/TraceReloggerLib.dll": {
+            "assemblyVersion": "0.0.0.0",
+            "fileVersion": "0.0.0.0"
+          }
+        }
+      },
+      "Microsoft.Extensions.Hosting.WindowsServices/10.0.0": {
+        "dependencies": {
+          "System.ServiceProcess.ServiceController": "10.0.0"
+        },
+        "runtime": {
+          "lib/net10.0/Microsoft.Extensions.Hosting.WindowsServices.dll": {
+            "assemblyVersion": "10.0.0.0",
+            "fileVersion": "10.0.25.52411"
+          }
+        }
+      },
+      "SQLitePCLRaw.bundle_e_sqlite3/2.1.11": {
+        "dependencies": {
+          "SQLitePCLRaw.lib.e_sqlite3": "2.1.12-pre20260709125052",
+          "SQLitePCLRaw.provider.e_sqlite3": "2.1.11"
+        },
+        "runtime": {
+          "lib/netstandard2.0/SQLitePCLRaw.batteries_v2.dll": {
+            "assemblyVersion": "2.1.11.2622",
+            "fileVersion": "2.1.11.2622"
+          }
+        }
+      },
+      "SQLitePCLRaw.core/2.1.11": {
+        "runtime": {
+          "lib/netstandard2.0/SQLitePCLRaw.core.dll": {
+            "assemblyVersion": "2.1.11.2622",
+            "fileVersion": "2.1.11.2622"
+          }
+        }
+      },
+      "SQLitePCLRaw.lib.e_sqlite3/2.1.12-pre20260709125052": {
+        "native": {
+          "runtimes/win-x64/native/e_sqlite3.dll": {
+            "fileVersion": "3.53.3.0"
+          }
+        }
+      },
+      "SQLitePCLRaw.provider.e_sqlite3/2.1.11": {
+        "dependencies": {
+          "SQLitePCLRaw.core": "2.1.11"
+        },
+        "runtime": {
+          "lib/net6.0-windows7.0/SQLitePCLRaw.provider.e_sqlite3.dll": {
+            "assemblyVersion": "2.1.11.2622",
+            "fileVersion": "2.1.11.2622"
+          }
+        }
+      },
+      "System.ServiceProcess.ServiceController/10.0.0": {
+        "runtime": {
+          "runtimes/win/lib/net10.0/System.ServiceProcess.ServiceController.dll": {
+            "assemblyVersion": "10.0.0.0",
+            "fileVersion": "10.0.25.52411"
+          }
+        }
+      },
+      "Microsoft.Web.Administration/7.0.0.0": {
+        "runtime": {
+          "Microsoft.Web.Administration.dll": {
+            "assemblyVersion": "7.0.0.0",
+            "fileVersion": "10.0.26100.6584"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "iisidsd/0.1.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Microsoft.Data.Sqlite/10.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-I/azQ5WjwoLvSlTyDydkhARPSjYJN8jkXRjR5D92OeyTLbTrQ1K93rgf6XU+HYWHZA6lBI9SUOfl69OqEHb4ow==",
+      "path": "microsoft.data.sqlite/10.0.0",
+      "hashPath": "microsoft.data.sqlite.10.0.0.nupkg.sha512"
+    },
+    "Microsoft.Data.Sqlite.Core/10.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-wPKG/Ym6tSMCo06UOZXzVfeFGzawnOZrTba/R3PfK+RhNuNELZ9I7nFns4WGTtv2kKlrlmmErgJ+kgTXHaNdHg==",
+      "path": "microsoft.data.sqlite.core/10.0.0",
+      "hashPath": "microsoft.data.sqlite.core.10.0.0.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.NETCore.Client/0.2.510501": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-juoqJYMDs+lRrrZyOkXXMImJHneCF23cuvO4waFRd2Ds7j+ZuGIPbJm0Y/zz34BdeaGiiwGWraMUlln05W1PCQ==",
+      "path": "microsoft.diagnostics.netcore.client/0.2.510501",
+      "hashPath": "microsoft.diagnostics.netcore.client.0.2.510501.nupkg.sha512"
+    },
+    "Microsoft.Diagnostics.Tracing.TraceEvent/3.1.28": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-hpuHM+c+CpR8yrpD2BudcERKL9yabk/ommXrhQ4Ry522i50af/Q79jdSjWtXwzq9wuqipA3Oso6IAatFV98NoQ==",
+      "path": "microsoft.diagnostics.tracing.traceevent/3.1.28",
+      "hashPath": "microsoft.diagnostics.tracing.traceevent.3.1.28.nupkg.sha512"
+    },
+    "Microsoft.Extensions.Hosting.WindowsServices/10.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-4jFNSKTrGd2bHjIHY+TMqcB56gtIm91fNwfqWp2SMvVAvuweAnUMDWiai1CN4boM2s0zi4xVU9rWDLjIA58tDQ==",
+      "path": "microsoft.extensions.hosting.windowsservices/10.0.0",
+      "hashPath": "microsoft.extensions.hosting.windowsservices.10.0.0.nupkg.sha512"
+    },
+    "SQLitePCLRaw.bundle_e_sqlite3/2.1.11": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-DC4nA7yWnf4UZdgJDF+9Mus4/cb0Y3Sfgi3gDnAoKNAIBwzkskNAbNbyu+u4atT0ruVlZNJfwZmwiEwE5oz9LQ==",
+      "path": "sqlitepclraw.bundle_e_sqlite3/2.1.11",
+      "hashPath": "sqlitepclraw.bundle_e_sqlite3.2.1.11.nupkg.sha512"
+    },
+    "SQLitePCLRaw.core/2.1.11": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-PK0GLFkfhZzLQeR3PJf71FmhtHox+U3vcY6ZtswoMjrefkB9k6ErNJEnwXqc5KgXDSjige2XXrezqS39gkpQKA==",
+      "path": "sqlitepclraw.core/2.1.11",
+      "hashPath": "sqlitepclraw.core.2.1.11.nupkg.sha512"
+    },
+    "SQLitePCLRaw.lib.e_sqlite3/2.1.12-pre20260709125052": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-GIFAmF4SzcMNCUy0ECxT7/uxFtypVqnFzk9A6Xlpetvl1mmQ2x2gBUaEpaTgYBsbbbxyUDk6g2Jn8eY2PMmCJw==",
+      "path": "sqlitepclraw.lib.e_sqlite3/2.1.12-pre20260709125052",
+      "hashPath": "sqlitepclraw.lib.e_sqlite3.2.1.12-pre20260709125052.nupkg.sha512"
+    },
+    "SQLitePCLRaw.provider.e_sqlite3/2.1.11": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-Y/0ZkR+r0Cg3DQFuCl1RBnv/tmxpIZRU3HUvelPw6MVaKHwYYR8YNvgs0vuNuXCMvlyJ+Fh88U1D4tah1tt6qw==",
+      "path": "sqlitepclraw.provider.e_sqlite3/2.1.11",
+      "hashPath": "sqlitepclraw.provider.e_sqlite3.2.1.11.nupkg.sha512"
+    },
+    "System.ServiceProcess.ServiceController/10.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-PaFmFQXX/qL1vl0CfdJUMPMYT8TOEHlcdEiOZtd4LV2rcaS/WDQM4bpECcbRM4BrD+DWkWd/jtb6iPOqAX9TWA==",
+      "path": "system.serviceprocess.servicecontroller/10.0.0",
+      "hashPath": "system.serviceprocess.servicecontroller.10.0.0.nupkg.sha512"
+    },
+    "Microsoft.Web.Administration/7.0.0.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

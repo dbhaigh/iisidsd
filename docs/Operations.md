@@ -86,6 +86,22 @@ Operational cautions:
 - deny-list actions are site-specific, not global
 - current deny-list state is not yet stored as an audit history table in SQLite
 
+## Tray service operations
+
+The notification-area icon now exposes service lifecycle actions:
+
+- Install service
+- Start service
+- Stop service
+- Restart service
+- Uninstall service
+
+Notes:
+
+- Service operations require administrative privileges.
+- Install now attempts to start the service immediately after creation.
+- Menu options are enabled or disabled automatically from current service state.
+
 ## Recommended runbook
 
 ### Review suspicious activity

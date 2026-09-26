@@ -12,7 +12,13 @@
 - IIS site discovery and deny-list inspection
 - Optional IIS deny-list modifications guarded by configuration
 - Browser dashboard with live events, findings, detail, and IIS views
-- Notification-area icon for opening the dashboard
+- Notification-area icon with dashboard launch and service controls
+
+## Release 0.1.0 highlights
+
+- Added expanded tray right-click menu for service operations.
+- Added install/start/stop/restart/uninstall actions for the `iisidsd` Windows service.
+- Added state-aware tray menu enablement based on admin rights and service status.
 
 ## Project layout
 
