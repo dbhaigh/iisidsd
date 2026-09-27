@@ -13,22 +13,37 @@ public sealed class BanCountService(
     private readonly string _databasePath = GetDatabasePath(hostEnvironment.ContentRootPath, storageOptions.Value.DatabasePath);
     private readonly Lock _sync = new();
 
-    public IReadOnlyList<BanCountRecord> GetBanCounts(int limit)
+    public IReadOnlyList<BanCountRecord> GetBanCounts(int limit, string? domain = null)
     {
         limit = Math.Max(1, limit);
+        var normalizedDomain = NormalizeDomainKey(domain);
         var results = new List<BanCountRecord>();
 
         lock (_sync)
         {
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT client_ip, ban_count, last_updated_utc
-                FROM ban_counts
-                ORDER BY ban_count DESC, last_updated_utc DESC
-                LIMIT $limit;
-                """;
+            command.CommandText = string.IsNullOrEmpty(normalizedDomain)
+                ? """
+                    SELECT client_ip, SUM(ban_count) AS ban_count, MAX(last_updated_utc) AS last_updated_utc
+                    FROM ban_counts
+                    GROUP BY client_ip
+                    ORDER BY ban_count DESC, last_updated_utc DESC
+                    LIMIT $limit;
+                    """
+                : """
+                    SELECT client_ip, SUM(ban_count) AS ban_count, MAX(last_updated_utc) AS last_updated_utc
+                    FROM ban_counts
+                    WHERE domain = $domain
+                    GROUP BY client_ip
+                    ORDER BY ban_count DESC, last_updated_utc DESC
+                    LIMIT $limit;
+                    """;
             command.Parameters.AddWithValue("$limit", limit);
+            if (!string.IsNullOrEmpty(normalizedDomain))
+            {
+                command.Parameters.AddWithValue("$domain", normalizedDomain);
+            }
 
             using var reader = command.ExecuteReader();
             while (reader.Read())
@@ -40,7 +55,7 @@ public sealed class BanCountService(
         return results;
     }
 
-    public IReadOnlyDictionary<string, BanCountRecord> GetBanCounts(IEnumerable<string> clientIps)
+    public IReadOnlyDictionary<string, BanCountRecord> GetBanCounts(IEnumerable<string> clientIps, string? domain = null)
     {
         var ips = clientIps
             .Where(static value => !string.IsNullOrWhiteSpace(value))
@@ -51,6 +66,7 @@ public sealed class BanCountService(
             return new Dictionary<string, BanCountRecord>(StringComparer.OrdinalIgnoreCase);
         }
 
+        var normalizedDomain = NormalizeDomainKey(domain);
         var results = new Dictionary<string, BanCountRecord>(StringComparer.OrdinalIgnoreCase);
         lock (_sync)
         {
@@ -64,11 +80,23 @@ public sealed class BanCountService(
                 command.Parameters.AddWithValue(parameterName, ips[index]);
             }
 
-            command.CommandText = $"""
-                SELECT client_ip, ban_count, last_updated_utc
-                FROM ban_counts
-                WHERE client_ip IN ({string.Join(", ", parameterNames)});
-                """;
+            command.CommandText = string.IsNullOrEmpty(normalizedDomain)
+                ? $"""
+                    SELECT client_ip, SUM(ban_count) AS ban_count, MAX(last_updated_utc) AS last_updated_utc
+                    FROM ban_counts
+                    WHERE client_ip IN ({string.Join(", ", parameterNames)})
+                    GROUP BY client_ip;
+                    """
+                : $"""
+                    SELECT client_ip, SUM(ban_count) AS ban_count, MAX(last_updated_utc) AS last_updated_utc
+                    FROM ban_counts
+                    WHERE client_ip IN ({string.Join(", ", parameterNames)}) AND domain = $domain
+                    GROUP BY client_ip;
+                    """;
+            if (!string.IsNullOrEmpty(normalizedDomain))
+            {
+                command.Parameters.AddWithValue("$domain", normalizedDomain);
+            }
 
             using var reader = command.ExecuteReader();
             while (reader.Read())
@@ -81,23 +109,36 @@ public sealed class BanCountService(
         return results;
     }
 
-    public BanCountRecord GetBanCount(string clientIp)
+    public BanCountRecord GetBanCount(string clientIp, string? domain = null)
     {
         if (string.IsNullOrWhiteSpace(clientIp))
         {
             throw new ArgumentException("Client IP is required.", nameof(clientIp));
         }
 
+        var normalizedDomain = NormalizeDomainKey(domain);
         lock (_sync)
         {
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT client_ip, ban_count, last_updated_utc
-                FROM ban_counts
-                WHERE client_ip = $clientIp;
-                """;
+            command.CommandText = string.IsNullOrEmpty(normalizedDomain)
+                ? """
+                    SELECT client_ip, SUM(ban_count) AS ban_count, MAX(last_updated_utc) AS last_updated_utc
+                    FROM ban_counts
+                    WHERE client_ip = $clientIp
+                    GROUP BY client_ip;
+                    """
+                : """
+                    SELECT client_ip, SUM(ban_count) AS ban_count, MAX(last_updated_utc) AS last_updated_utc
+                    FROM ban_counts
+                    WHERE client_ip = $clientIp AND domain = $domain
+                    GROUP BY client_ip;
+                    """;
             command.Parameters.AddWithValue("$clientIp", clientIp);
+            if (!string.IsNullOrEmpty(normalizedDomain))
+            {
+                command.Parameters.AddWithValue("$domain", normalizedDomain);
+            }
 
             using var reader = command.ExecuteReader();
             return reader.Read()
@@ -106,7 +147,7 @@ public sealed class BanCountService(
         }
     }
 
-    public BanCountRecord SetBanCount(string clientIp, int banCount)
+    public BanCountRecord SetBanCount(string clientIp, int banCount, string? domain = null)
     {
         if (string.IsNullOrWhiteSpace(clientIp))
         {
@@ -118,25 +159,70 @@ public sealed class BanCountService(
             throw new ArgumentOutOfRangeException(nameof(banCount), banCount, "Ban count must be non-negative.");
         }
 
+        var normalizedDomain = NormalizeDomainKey(domain);
         var updated = new BanCountRecord(clientIp, banCount, DateTimeOffset.UtcNow);
         lock (_sync)
         {
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
             command.CommandText = """
-                INSERT INTO ban_counts (client_ip, ban_count, last_updated_utc)
-                VALUES ($clientIp, $banCount, $lastUpdatedUtc)
-                ON CONFLICT(client_ip) DO UPDATE SET
+                INSERT INTO ban_counts (client_ip, domain, ban_count, last_updated_utc)
+                VALUES ($clientIp, $domain, $banCount, $lastUpdatedUtc)
+                ON CONFLICT(client_ip, domain) DO UPDATE SET
                     ban_count = excluded.ban_count,
                     last_updated_utc = excluded.last_updated_utc;
                 """;
             command.Parameters.AddWithValue("$clientIp", updated.ClientIp);
+            command.Parameters.AddWithValue("$domain", normalizedDomain);
             command.Parameters.AddWithValue("$banCount", updated.BanCount);
             command.Parameters.AddWithValue("$lastUpdatedUtc", updated.LastUpdated.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
             command.ExecuteNonQuery();
         }
 
         return updated;
+    }
+
+    public void IncrementBanCounts(string clientIp, IEnumerable<string> domains)
+    {
+        if (string.IsNullOrWhiteSpace(clientIp))
+        {
+            throw new ArgumentException("Client IP is required.", nameof(clientIp));
+        }
+
+        var normalizedDomains = (domains ?? [])
+            .Select(NormalizeDomainKey)
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (normalizedDomains.Length == 0)
+        {
+            return;
+        }
+
+        var lastUpdatedUtc = DateTimeOffset.UtcNow.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+        lock (_sync)
+        {
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            foreach (var domain in normalizedDomains)
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = """
+                    INSERT INTO ban_counts (client_ip, domain, ban_count, last_updated_utc)
+                    VALUES ($clientIp, $domain, 1, $lastUpdatedUtc)
+                    ON CONFLICT(client_ip, domain) DO UPDATE SET
+                        ban_count = ban_count + 1,
+                        last_updated_utc = excluded.last_updated_utc;
+                    """;
+                command.Parameters.AddWithValue("$clientIp", clientIp);
+                command.Parameters.AddWithValue("$domain", domain);
+                command.Parameters.AddWithValue("$lastUpdatedUtc", lastUpdatedUtc);
+                command.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
     }
 
     private SqliteConnection OpenConnection()
@@ -156,6 +242,11 @@ public sealed class BanCountService(
             reader.GetString(0),
             reader.GetInt32(1),
             DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind));
+
+    private static string NormalizeDomainKey(string? domain)
+        => string.IsNullOrWhiteSpace(domain)
+            ? string.Empty
+            : domain.Trim().TrimEnd('.').ToLowerInvariant();
 
     private static string GetDatabasePath(string contentRootPath, string configuredPath)
         => Path.IsPathRooted(configuredPath)

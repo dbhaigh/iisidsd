@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWindowsForms>true</UseWindowsForms>
     <UserSecretsId>dotnet-iisidsd-b89a51e7-11fb-4fd6-8c1f-6fd9a574f968</UserSecretsId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
   </PropertyGroup>
 
   <ItemGroup>

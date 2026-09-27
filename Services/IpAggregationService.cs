@@ -21,7 +21,7 @@ public sealed class IpAggregationService(
             .Where(static webEvent => !string.IsNullOrWhiteSpace(webEvent.ClientIp))
             .GroupBy(static webEvent => webEvent.ClientIp, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var banCounts = _banCountService.GetBanCounts(eventGroups.Select(static group => group.Key));
+        var banCounts = _banCountService.GetBanCounts(eventGroups.Select(static group => group.Key), domain);
 
         return eventGroups
             .Select(group => BuildFinding(group, banCounts.TryGetValue(group.Key, out var banCount) ? banCount : null))
@@ -41,13 +41,13 @@ public sealed class IpAggregationService(
         }
 
         var events = _eventStore.GetRecent(_eventRetentionLimit, clientIp: clientIp, domain: domain);
-        return events.Count == 0 ? null : BuildFinding(events, _banCountService.GetBanCount(clientIp));
+        return events.Count == 0 ? null : BuildFinding(events, _banCountService.GetBanCount(clientIp, domain));
     }
 
     private static IpFinding BuildFinding(IEnumerable<SecurityEvent> events, BanCountRecord? banCount)
     {
         var eventList = events.ToArray();
-        var suspiciousEvents = eventList.Where(static webEvent => webEvent.IsSuspicious || webEvent.RiskScore >= 20).ToArray();
+        var suspiciousEvents = eventList.Where(static webEvent => webEvent.IsSuspicious || webEvent.RiskScore > 0).ToArray();
         var highestRiskEvent = eventList
             .OrderByDescending(static webEvent => webEvent.RiskScore)
             .ThenByDescending(static webEvent => webEvent.Timestamp)

@@ -43,10 +43,11 @@ public sealed class IpAggregationServiceTests
 
         var service = new IpAggregationService(
             eventStore,
-            new FakeBanCountService(new Dictionary<string, BanCountRecord>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["198.51.100.24"] = new("198.51.100.24", 3, DateTimeOffset.UtcNow)
-            }),
+            new FakeBanCountService(
+                new Dictionary<string, BanCountRecord>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["198.51.100.24"] = new("198.51.100.24", 3, DateTimeOffset.UtcNow)
+                }),
             Options.Create(new StorageOptions { EventRetentionLimit = 100 }));
 
         var finding = Assert.Single(service.GetFindings(10));
@@ -60,24 +61,100 @@ public sealed class IpAggregationServiceTests
         Assert.Contains("beta.test", finding.Domains);
     }
 
-    private sealed class FakeBanCountService(IReadOnlyDictionary<string, BanCountRecord> records) : IBanCountService
+    [Fact]
+    public void GetFindings_UsesDomainScopedBanCountsWhenFiltered()
     {
-        private readonly IReadOnlyDictionary<string, BanCountRecord> _records = records;
+        var eventStore = new InMemoryEventStore(Options.Create(new IisEtwOptions { RetentionLimit = 100, SubscriptionBufferSize = 10 }));
+        eventStore.Publish(new SecurityEvent(
+            DateTimeOffset.UtcNow.AddMinutes(-1),
+            "server01",
+            "alpha.test",
+            "GET",
+            "/admin/../config",
+            "198.51.100.24",
+            404,
+            "agent-a",
+            new Dictionary<string, string>(),
+            IsSuspicious: true,
+            DetectionReason: "HTTP status 404",
+            RiskScore: 60,
+            RiskSeverity: "High",
+            RiskIndicators: ["path traversal"]));
+        eventStore.Publish(new SecurityEvent(
+            DateTimeOffset.UtcNow,
+            "server01",
+            "beta.test",
+            "GET",
+            "/home",
+            "198.51.100.24",
+            200,
+            "agent-a",
+            new Dictionary<string, string>()));
 
-        public IReadOnlyList<BanCountRecord> GetBanCounts(int limit)
-            => _records.Values.Take(limit).ToArray();
+        var service = new IpAggregationService(
+            eventStore,
+            new FakeBanCountService(
+                new Dictionary<string, BanCountRecord>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["198.51.100.24"] = new("198.51.100.24", 3, DateTimeOffset.UtcNow)
+                },
+                new Dictionary<string, IReadOnlyDictionary<string, BanCountRecord>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["alpha.test"] = new Dictionary<string, BanCountRecord>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["198.51.100.24"] = new("198.51.100.24", 1, DateTimeOffset.UtcNow)
+                    }
+                }),
+            Options.Create(new StorageOptions { EventRetentionLimit = 100 }));
 
-        public IReadOnlyDictionary<string, BanCountRecord> GetBanCounts(IEnumerable<string> clientIps)
-            => clientIps
-                .Where(_records.ContainsKey)
-                .ToDictionary(ip => ip, ip => _records[ip], StringComparer.OrdinalIgnoreCase);
+        var finding = Assert.Single(service.GetFindings(10, "alpha.test"));
 
-        public BanCountRecord GetBanCount(string clientIp)
-            => _records.TryGetValue(clientIp, out var record)
+        Assert.Equal("198.51.100.24", finding.ClientIp);
+        Assert.Equal(1, finding.RequestCount);
+        Assert.Equal(1, finding.SuspiciousRequestCount);
+        Assert.Equal(1, finding.BanCount);
+        Assert.Single(finding.Domains);
+        Assert.Equal("alpha.test", finding.Domains[0]);
+    }
+
+    private sealed class FakeBanCountService(
+        IReadOnlyDictionary<string, BanCountRecord> aggregateRecords,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, BanCountRecord>>? recordsByDomain = null) : IBanCountService
+    {
+        private readonly IReadOnlyDictionary<string, BanCountRecord> _aggregateRecords = aggregateRecords;
+        private readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, BanCountRecord>> _recordsByDomain =
+            recordsByDomain ?? new Dictionary<string, IReadOnlyDictionary<string, BanCountRecord>>(StringComparer.OrdinalIgnoreCase);
+
+        public IReadOnlyList<BanCountRecord> GetBanCounts(int limit, string? domain = null)
+            => SelectRecords(domain).Values.Take(limit).ToArray();
+
+        public IReadOnlyDictionary<string, BanCountRecord> GetBanCounts(IEnumerable<string> clientIps, string? domain = null)
+        {
+            var records = SelectRecords(domain);
+            return clientIps
+                .Where(records.ContainsKey)
+                .ToDictionary(ip => ip, ip => records[ip], StringComparer.OrdinalIgnoreCase);
+        }
+
+        public BanCountRecord GetBanCount(string clientIp, string? domain = null)
+        {
+            var records = SelectRecords(domain);
+            return records.TryGetValue(clientIp, out var record)
                 ? record
                 : new BanCountRecord(clientIp, 0, DateTimeOffset.UtcNow);
+        }
 
-        public BanCountRecord SetBanCount(string clientIp, int banCount)
+        public BanCountRecord SetBanCount(string clientIp, int banCount, string? domain = null)
             => throw new NotSupportedException();
+
+        public void IncrementBanCounts(string clientIp, IEnumerable<string> domains)
+            => throw new NotSupportedException();
+
+        private IReadOnlyDictionary<string, BanCountRecord> SelectRecords(string? domain)
+            => string.IsNullOrWhiteSpace(domain)
+                ? _aggregateRecords
+                : _recordsByDomain.TryGetValue(domain, out var records)
+                    ? records
+                    : new Dictionary<string, BanCountRecord>(StringComparer.OrdinalIgnoreCase);
     }
 }

@@ -1,53 +1,35 @@
-# Incoming URL risk scoring
+# Request risk scoring
 
-The detector assigns a heuristic score from 0 to 100 to the IIS request target. The score is an indicator of suspiciousness, not a malware verdict or a replacement for threat-intelligence reputation checks.
+The detector now mirrors the legacy C++ ETW implementation and assigns an additive heuristic score based on request metadata (status, method, URI, user-agent).
 
-The current implementation stores this assessment with each persisted event and exposes it through the events feed, aggregated findings, and per-IP detail views.
+The score is an indicator of suspicious behavior, not a malware verdict or a threat-intelligence replacement.
 
 ## Severity bands
 
 | Score | Severity | Meaning |
 |---:|---|---|
-| 0–19 | Low | No material URL anomaly detected. |
-| 20–49 | Medium | Suspicious URL characteristic; investigate with request context. |
-| 50–79 | High | Multiple or significant suspicious characteristics. |
-| 80–100 | Critical | Strong combination of indicators; prioritize investigation or blocking according to policy. |
+| 0 | Low | No suspicious indicator matched. |
+| 1–3 | Medium | Lightweight probing behavior detected. |
+| 4–7 | High | Strong suspicious request trait detected. |
+| 8+ | Critical | Multiple high-confidence suspicious traits detected. |
 
-## Request-level scoring
+## Request-level scoring (legacy C++ parity)
 
-Scores are additive and capped at 100. Indicators currently contribute:
+Scores are additive.
 
-- Request target exceeding the configured length threshold: **10**
-- Invalid percent encoding: **20**
-- Control character: **25**
-- Path traversal (`../`, `..\\`, encoded or literal): **35**
-- Configured suspicious path fragment: **25** per matching fragment
-- Unexpected absolute-URI scheme: **40**
-- User-info component in a requested URL: **25**
-- Numeric IP host: **15**
-- Punycode (`xn--`) host: **10**
+- HTTP status `401`, `403`, or `404`: **+1** (`probing/error response`)
+- HTTP method `TRACE`, `CONNECT`, or `DEBUG`: **+3** (`unusual HTTP method`)
+- URI contains one of `../`, `%2e`, `wp-admin`, `phpmyadmin`, `/.env`: **+5** (`suspicious request URI`)
+- User-agent contains one of `sqlmap`, `nikto`, `nmap`, `masscan`, `burp`: **+6** (`known security scanner user-agent`)
 
-`IsSuspicious` is set for existing detector findings or a score of 20 or higher.
+`IsSuspicious` is set when total score is greater than `0`.
 
-Each stored event currently carries:
+Each stored event carries:
 
 - `RiskScore`
 - `RiskSeverity`
 - `RiskIndicators`
 - `DetectionReason`
-
-## Persistence workflow
-
-Risk-assessed events are persisted in SQLite by the event store.
-
-Current storage behavior:
-
-- all ingested events are written to the `events` table
-- recent-event queries are served from SQLite rather than memory
-- old rows are pruned according to `Storage:EventRetentionLimit`
-- SSE subscribers still receive live in-process event delivery
-
-This means the dashboard uses one model for both live and historical investigation.
 
 ## Findings workflow
 
@@ -56,40 +38,14 @@ Per-request scores are projected into IP-level findings by the aggregation servi
 Each finding summarizes:
 
 - highest observed risk score and severity for the IP
-- suspicious request count
+- suspicious request count (score > 0 or explicitly suspicious)
 - total request count
 - distinct domains targeted
 - merged detection reasons
 - merged risk indicators
 - persisted ban count
 
-A finding is therefore an operational summary of many scored events rather than a separate detection engine.
+## Notes
 
-## Ban-count workflow
-
-Ban counts are not part of the scoring formula. They are operator-managed metadata stored alongside the monitoring data.
-
-Current behavior:
-
-- ban counts are stored in the `ban_counts` table
-- findings include the current ban count for the IP
-- operators can update ban counts from the dashboard and API
-
-This keeps risk scoring explainable while still supporting repeat-offender workflows.
-
-## IIS workflow
-
-The dashboard can correlate findings with IIS sites and show each site's deny list.
-
-Current behavior:
-
-- sites are discovered from IIS bindings
-- selected findings can be matched to sites by observed domain
-- deny-list entries can be viewed without enabling write operations
-- deny-list modifications are gated by `IisAdmin:EnableDenyListChanges`
-
-The IIS deny-list workflow is operational response around the score; it does not change how the score itself is calculated.
-
-## Limits of the score
-
-The score does not establish that a URL is malicious. Confirmation still requires reputation or threat-intelligence data and analyst validation.
+- Ban counts are not part of the score formula.
+- The score remains heuristic and requires analyst validation for incident confirmation.

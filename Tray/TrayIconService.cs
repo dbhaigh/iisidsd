@@ -73,6 +73,7 @@ public sealed class TrayIconService(
     private sealed class TrayApplicationContext : ApplicationContext
     {
         private const string ServiceName = "iisidsd";
+        private const string TrayCompanionTaskName = "iisidsd Tray Companion";
 
         private readonly NotifyIcon _icon;
         private readonly string _browserUrl;
@@ -83,6 +84,9 @@ public sealed class TrayIconService(
         private readonly ToolStripMenuItem _stopService;
         private readonly ToolStripMenuItem _restartService;
         private readonly ToolStripMenuItem _uninstallService;
+        private readonly System.Windows.Forms.Timer _serviceStateTimer;
+        private readonly bool _trayOnlyProcess = Environment.GetCommandLineArgs()
+            .Any(arg => string.Equals(arg, "--tray-only", StringComparison.OrdinalIgnoreCase));
 
         public TrayApplicationContext(string browserUrl, IHostApplicationLifetime applicationLifetime, ILogger logger)
         {
@@ -115,6 +119,11 @@ public sealed class TrayIconService(
                 ContextMenuStrip = menu
             };
             _icon.DoubleClick += (_, _) => OpenDashboard();
+
+            _serviceStateTimer = new System.Windows.Forms.Timer { Interval = 3_000 };
+            _serviceStateTimer.Tick += (_, _) => UpdateServiceMenuState();
+            _serviceStateTimer.Start();
+            UpdateServiceMenuState();
         }
 
         private void UpdateServiceMenuState()
@@ -137,16 +146,18 @@ public sealed class TrayIconService(
             return principal.IsInRole(WindowsBuiltInRole.Administrator);
         }
 
-        private static bool TryGetServiceStatus(out ServiceControllerStatus? status)
+        private bool TryGetServiceStatus(out ServiceControllerStatus? status)
         {
             try
             {
                 using var service = new ServiceController(ServiceName);
+                service.Refresh();
                 status = service.Status;
                 return true;
             }
-            catch (InvalidOperationException)
+            catch (Exception exception)
             {
+                _logger.LogDebug(exception, "Unable to query service status for {ServiceName}.", ServiceName);
                 status = null;
                 return false;
             }
@@ -154,23 +165,43 @@ public sealed class TrayIconService(
 
         private void InstallService()
         {
-            var processPath = Environment.ProcessPath;
-            if (string.IsNullOrWhiteSpace(processPath))
-            {
-                ShowResult("Install service", false, "Unable to determine the current executable path.");
-                return;
-            }
-
-            var created = RunScCommand($"create {ServiceName} binPath= \"\"{processPath}\"\" start= auto");
-            var described = created && RunScCommand($"description {ServiceName} \"IIS intrusion detection service\"");
-            var started = described && RunScCommand($"start {ServiceName}");
-            ShowResult("Install service", started, "Run as Administrator to manage Windows services.");
+            StartServiceWithShutdown("Install service");
         }
 
         private void StartService()
         {
-            var success = RunScCommand($"start {ServiceName}");
-            ShowResult("Start service", success, "Run as Administrator to manage Windows services.");
+            StartServiceWithShutdown("Start service");
+        }
+
+        private void StartServiceWithShutdown(string operation)
+        {
+            if (!EnsureServiceInstalled())
+            {
+                ShowResult(operation, false, "Run as Administrator to manage Windows services.");
+                return;
+            }
+
+            if (_trayOnlyProcess)
+            {
+                var started = RunScCommand($"start {ServiceName}") || ScheduleDetachedStartRetries();
+                ShowResult(operation, started, "Run as Administrator to manage Windows services.");
+                return;
+            }
+
+            if (!ScheduleDetachedStartRetries())
+            {
+                ShowResult(operation, false, "Run as Administrator to manage Windows services.");
+                return;
+            }
+
+            _ = LaunchTrayCompanion();
+            BeginGracefulShutdownAfterServiceReady();
+
+            MessageBox.Show(
+                "iisidsd service startup is running in the background. This instance will close after the service dashboard is ready.",
+                "iisidsd service",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
 
         private void StopService()
@@ -189,8 +220,203 @@ public sealed class TrayIconService(
         private void UninstallService()
         {
             _ = RunScCommand($"stop {ServiceName}");
-            var success = RunScCommand($"delete {ServiceName}");
+            var serviceDeleted = RunScCommand($"delete {ServiceName}");
+            var startupRemoved = RemoveTrayCompanionAutoStart();
+            var success = serviceDeleted && startupRemoved;
             ShowResult("Uninstall service", success, "Run as Administrator to manage Windows services.");
+        }
+
+        private bool EnsureServiceInstalled()
+        {
+            if (TryGetServiceStatus(out _))
+            {
+                return EnsureTrayCompanionAutoStart();
+            }
+
+            var processPath = ResolveServiceProcessPath();
+            if (string.IsNullOrWhiteSpace(processPath))
+            {
+                return false;
+            }
+
+            var created = RunScCommand($"create {ServiceName} binPath= \"{processPath}\" start= auto");
+            if (!created || !RunScCommand($"description {ServiceName} \"IIS intrusion detection service\""))
+            {
+                return false;
+            }
+
+            return EnsureTrayCompanionAutoStart();
+        }
+
+        private bool ScheduleDetachedStartRetries()
+        {
+            try
+            {
+                var retryCommand = $"/c \"timeout /t 2 /nobreak >nul & for /l %i in (1,1,20) do (sc.exe start {ServiceName} && exit /b 0 || timeout /t 1 /nobreak >nul)\"";
+                using var process = Process.Start(new ProcessStartInfo("cmd.exe", retryCommand)
+                {
+                    UseShellExecute = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                });
+                return process is not null;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Unable to schedule detached service start retries for {ServiceName}.", ServiceName);
+                return false;
+            }
+        }
+
+        private bool EnsureTrayCompanionAutoStart()
+        {
+            var processPath = ResolveServiceProcessPath();
+            if (string.IsNullOrWhiteSpace(processPath))
+            {
+                return false;
+            }
+
+            var trayCommand = $"\"{processPath}\" --tray-only";
+            var arguments = $"/create /tn \"{TrayCompanionTaskName}\" /sc onlogon /tr \"{trayCommand}\" /rl LIMITED /f";
+            var success = RunSchtasksCommand(arguments, ignoreNotFound: false);
+            if (!success)
+            {
+                _logger.LogWarning("Unable to register tray companion auto-start task {TaskName}.", TrayCompanionTaskName);
+            }
+
+            return success;
+        }
+
+        private bool RemoveTrayCompanionAutoStart()
+        {
+            var arguments = $"/delete /tn \"{TrayCompanionTaskName}\" /f";
+            return RunSchtasksCommand(arguments, ignoreNotFound: true);
+        }
+
+        private bool RunSchtasksCommand(string arguments, bool ignoreNotFound)
+        {
+            try
+            {
+                using var process = Process.Start(new ProcessStartInfo("schtasks.exe", arguments)
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                });
+                if (process is null)
+                {
+                    return false;
+                }
+
+                process.WaitForExit();
+                var output = process.StandardOutput.ReadToEnd();
+                var error = process.StandardError.ReadToEnd();
+
+                if (process.ExitCode == 0)
+                {
+                    return true;
+                }
+
+                var detail = string.IsNullOrWhiteSpace(error) ? output : error;
+                if (ignoreNotFound && detail.Contains("cannot find", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                _logger.LogWarning("schtasks.exe {Arguments} failed with exit code {ExitCode}. Output: {Output}", arguments, process.ExitCode, detail);
+                return false;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Unable to execute task scheduler command: schtasks.exe {Arguments}", arguments);
+                return false;
+            }
+        }
+
+        private bool LaunchTrayCompanion()
+        {
+            var processPath = ResolveServiceProcessPath();
+            if (string.IsNullOrWhiteSpace(processPath))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var process = Process.Start(new ProcessStartInfo(processPath, "--tray-only")
+                {
+                    UseShellExecute = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                });
+                return process is not null;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "Unable to launch tray companion mode.");
+                return false;
+            }
+        }
+
+        private void BeginGracefulShutdownAfterServiceReady()
+        {
+            _ = Task.Run(async () =>
+            {
+                var ready = await WaitForServiceDashboardReadyAsync(TimeSpan.FromSeconds(60));
+                if (!ready)
+                {
+                    _logger.LogWarning("Service/dashboard readiness check timed out. Closing interactive host to let service continue.");
+                }
+
+                _applicationLifetime.StopApplication();
+            });
+        }
+
+        private async Task<bool> WaitForServiceDashboardReadyAsync(TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+
+            while (DateTime.UtcNow < deadline)
+            {
+                if (TryGetServiceStatus(out var status) && status == ServiceControllerStatus.Running)
+                {
+                    try
+                    {
+                        if (Uri.TryCreate(_browserUrl, UriKind.Absolute, out var baseUri))
+                        {
+                            using var response = await client.GetAsync(new Uri(baseUri, "health"));
+                            if (response.IsSuccessStatusCode)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                await Task.Delay(1_000);
+            }
+
+            return false;
+        }
+
+        private static string? ResolveServiceProcessPath()
+        {
+            if (!string.IsNullOrWhiteSpace(Environment.ProcessPath))
+            {
+                return Environment.ProcessPath;
+            }
+
+            try
+            {
+                return Process.GetCurrentProcess().MainModule?.FileName;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private bool RunScCommand(string arguments)
@@ -248,6 +474,7 @@ public sealed class TrayIconService(
 
         public void ExitThread()
         {
+            _serviceStateTimer.Stop();
             _icon.Visible = false;
             _icon.Dispose();
             ExitThreadCore();
@@ -257,6 +484,8 @@ public sealed class TrayIconService(
         {
             if (disposing)
             {
+                _serviceStateTimer.Stop();
+                _serviceStateTimer.Dispose();
                 _icon.Visible = false;
                 _icon.Dispose();
             }

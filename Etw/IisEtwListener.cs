@@ -1,6 +1,7 @@
 using System.Globalization;
 using iisidsd.Configuration;
 using iisidsd.Detection;
+using iisidsd.Iis;
 using iisidsd.Models;
 using iisidsd.Storage;
 using Microsoft.Diagnostics.Tracing;
@@ -12,6 +13,7 @@ namespace iisidsd.Etw;
 public sealed class IisEtwListener(
     IEventStore eventStore,
     ISuspiciousActivityDetector detector,
+    IIisAutoDenyService autoDenyService,
     IOptions<IisEtwOptions> options,
     ILogger<IisEtwListener> logger) : BackgroundService
 {
@@ -61,10 +63,12 @@ public sealed class IisEtwListener(
             properties);
 
         var suspiciousEvent = detector.Analyze(webEvent);
-        eventStore.Publish(suspiciousEvent ?? webEvent);
+        var storedEvent = suspiciousEvent ?? webEvent;
+        eventStore.Publish(storedEvent);
         if (suspiciousEvent is not null)
         {
             logger.LogWarning("Suspicious IIS activity detected for {Domain}: {Reason}", suspiciousEvent.Domain, suspiciousEvent.DetectionReason);
+            autoDenyService.Apply(suspiciousEvent);
         }
     }
 

@@ -100,6 +100,9 @@ Notes:
 
 - Service operations require administrative privileges.
 - Install now attempts to start the service immediately after creation.
+- Install/service management also registers a Startup scheduled task (`iisidsd Tray Companion`) to launch tray companion mode at user logon.
+- When the service is already running, interactive launches switch directly to tray companion mode.
+- During install/start from a full interactive host, the dashboard remains available while handoff completes, then the original host closes gracefully after readiness checks.
 - Menu options are enabled or disabled automatically from current service state.
 
 ## Recommended runbook
