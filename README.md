@@ -14,11 +14,12 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls
 
-## Release 0.1.0 highlights
+## Release 0.1.1 highlights
 
-- Added expanded tray right-click menu for service operations.
-- Added install/start/stop/restart/uninstall actions for the `iisidsd` Windows service.
-- Added state-aware tray menu enablement based on admin rights and service status.
+- Added tray companion auto-start task registration at user logon during service install workflows.
+- Added automatic tray companion startup when the `iisidsd` service is already running.
+- Improved start/install handoff so dashboard availability is preserved while the service transitions to background operation.
+- Interactive console window now runs hidden in tray-interactive mode and exits gracefully after service/dashboard readiness.
 
 ## Project layout
 
