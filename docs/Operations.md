@@ -18,6 +18,12 @@ Suspicious request activity is processed in two layers:
 1. `Detection/SuspiciousActivityDetector.cs` scores the incoming request target and returns a request-level suspicious event when indicators are present.
 2. `Services/IpAggregationService.cs` groups recent stored events by client IP to produce dashboard findings.
 
+Important detection behavior:
+
+- repeated `404` responses from the same client IP are treated as exploit-probing/scanning behavior
+- this repeated-not-found signal adds extra risk and can raise an event to `High` severity
+- `High` and `Critical` suspicious events are eligible for automatic deny-list updates when `IisAdmin:EnableDenyListChanges=true`
+
 Each finding includes:
 
 - client IP

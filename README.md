@@ -14,12 +14,11 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls
 
-## Release 0.1.1 highlights
+## Release 0.1.2 highlights
 
-- Added tray companion auto-start task registration at user logon during service install workflows.
-- Added automatic tray companion startup when the `iisidsd` service is already running.
-- Improved start/install handoff so dashboard availability is preserved while the service transitions to background operation.
-- Interactive console window now runs hidden in tray-interactive mode and exits gracefully after service/dashboard readiness.
+- Added repeated `404 Not Found` burst detection per client IP to better identify exploit scanning.
+- Added configurable thresholds for repeated-404 heuristics: `Detection:NotFoundBurstThreshold` and `Detection:NotFoundBurstLookbackLimit`.
+- Repeated `404` probing now raises risk and can move findings into `High` severity, enabling automatic deny-list updates when IIS admin writes are enabled.
 
 ## Project layout
 
@@ -54,6 +53,8 @@ Controls URL-risk heuristics.
 
 - `MinimumSuspiciousStatusCode`
 - `RequestPathLengthThreshold`
+- `NotFoundBurstThreshold`
+- `NotFoundBurstLookbackLimit`
 - `SuspiciousPathFragments`
 
 ### `Storage`

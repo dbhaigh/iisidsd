@@ -129,6 +129,34 @@ public sealed class SuspiciousActivityDetectorTests
         Assert.Equal(5, suspiciousEvent.RiskScore);
     }
 
+    [Fact]
+    public void Analyze_RepeatedNotFoundResponsesFromSameIp_IsHighRisk()
+    {
+        var repeatedIp = "203.0.113.250";
+        var eventStore = new FakeEventStore([
+            new SecurityEvent(DateTimeOffset.UtcNow.AddMinutes(-2), "server01", "example.test", "GET", "/missing-one", repeatedIp, 404, "unit-test", new Dictionary<string, string>()),
+            new SecurityEvent(DateTimeOffset.UtcNow.AddMinutes(-1), "server01", "example.test", "GET", "/missing-two", repeatedIp, 404, "unit-test", new Dictionary<string, string>())
+        ]);
+        var detector = new SuspiciousActivityDetector(Options.Create(new DetectionOptions()), eventStore);
+
+        var suspiciousEvent = detector.Analyze(new SecurityEvent(
+            DateTimeOffset.UtcNow,
+            "server01",
+            "example.test",
+            "GET",
+            "/missing-three",
+            repeatedIp,
+            404,
+            "unit-test",
+            new Dictionary<string, string>()));
+
+        Assert.NotNull(suspiciousEvent);
+        Assert.Equal("repeated not found probing", suspiciousEvent.DetectionReason);
+        Assert.Equal(4, suspiciousEvent.RiskScore);
+        Assert.Equal("High", suspiciousEvent.RiskSeverity);
+        Assert.Contains("multiple 404 responses from the same client IP", suspiciousEvent.RiskIndicators ?? []);
+    }
+
     private sealed class FakeEventStore(IReadOnlyList<SecurityEvent> events) : IEventStore
     {
         public IReadOnlyList<SecurityEvent> GetRecent(int limit, string? clientIp = null, string? domain = null, bool suspiciousOnly = false)

@@ -18,6 +18,7 @@ The score is an indicator of suspicious behavior, not a malware verdict or a thr
 Scores are additive.
 
 - HTTP status `401`, `403`, or `404`: **+1** (`probing/error response`)
+- Repeated `404` responses from the same client IP (default threshold `3` in recent history): **+3** (`repeated not found probing`)
 - HTTP method `TRACE`, `CONNECT`, or `DEBUG`: **+3** (`unusual HTTP method`)
 - URI contains one of `../`, `%2e`, `wp-admin`, `phpmyadmin`, `/.env`: **+5** (`suspicious request URI`)
 - User-agent contains one of `sqlmap`, `nikto`, `nmap`, `masscan`, `burp`: **+6** (`known security scanner user-agent`)

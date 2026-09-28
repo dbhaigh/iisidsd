@@ -45,6 +45,13 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
             indicators.Add("suspicious status code (401/403/404)");
         }
 
+        if (IsRepeatedNotFoundScan(webEvent))
+        {
+            score += 3;
+            reason = "repeated not found probing";
+            indicators.Add("multiple 404 responses from the same client IP");
+        }
+
         if (UnusualMethods.Contains(method))
         {
             score += 3;
@@ -89,6 +96,21 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
             RiskSeverity = GetSeverity(score),
             RiskIndicators = indicators
         };
+    }
+
+    private bool IsRepeatedNotFoundScan(SecurityEvent webEvent)
+    {
+        if (webEvent.StatusCode != 404 || _eventStore is null || string.IsNullOrWhiteSpace(webEvent.ClientIp))
+        {
+            return false;
+        }
+
+        var threshold = Math.Max(2, _options.NotFoundBurstThreshold);
+        var lookbackLimit = Math.Max(threshold, _options.NotFoundBurstLookbackLimit);
+        var priorNotFoundResponses = _eventStore.GetRecent(lookbackLimit, clientIp: webEvent.ClientIp)
+            .Count(static previousEvent => previousEvent.StatusCode == 404);
+
+        return priorNotFoundResponses + 1 >= threshold;
     }
 
     private bool IsUnrecognizedFileTypeRequest(SecurityEvent webEvent)

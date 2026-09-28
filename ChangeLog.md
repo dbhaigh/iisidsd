@@ -1,5 +1,15 @@
 # Change Log
 
+## 0.1.2 - 2026-09-28
+
+### Added
+- Repeated `404 Not Found` burst detection for a single client IP to identify exploit-scanning behavior.
+- New detection configuration knobs: `NotFoundBurstThreshold` and `NotFoundBurstLookbackLimit`.
+
+### Changed
+- Repeated `404` probing now contributes additional risk (`+3`) and can elevate events to `High` severity for automatic IIS deny-list action.
+- Documentation updated to describe repeated-404 heuristics and release behavior.
+
 ## 0.1.1 - 2026-09-27
 
 ### Added
