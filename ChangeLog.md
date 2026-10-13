@@ -1,6 +1,6 @@
 # Change Log
 
-## 0.1.3 - Unreleased
+## 0.1.4 - 2026-10-12
 
 ### Security
 - Dashboard access is loopback-only by default; opt-in remote access requires Windows Authentication and HTTPS.
@@ -9,7 +9,9 @@
 
 ### Changed
 - ETW capture uses a bounded ingestion queue so SQLite and IIS operations do not run on the ETW callback.
-- Detection thresholds and suspicious path fragments now use their documented configuration values.
+- Detection thresholds and suspicious path fragments now use their documented configuration values, and unfamiliar file types contribute less risk.
+- Tray service lifecycle operations no longer block the Windows Forms UI while waiting for service or dashboard readiness.
+- ETW queue capacity is configurable, and dropped events are reported when the queue is saturated.
 
 ## 0.1.2 - 2026-09-28
 

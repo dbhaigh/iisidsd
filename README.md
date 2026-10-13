@@ -14,12 +14,13 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls
 
-## Release 0.1.3 highlights
+## Release 0.1.4 highlights
 
 - Dashboard access is loopback-only by default. Optional remote access requires Windows Authentication and HTTPS.
 - Ban-count and IIS deny-list HTTP writes require an authenticated Windows Administrator; deny-list changes also require `IisAdmin:EnableDenyListChanges`.
 - Automatic IIS blocking requires a repeated-404 signal or a critical event with multiple distinct indicators.
 - ETW capture is decoupled from database and IIS operations through a bounded ingestion queue.
+- Tray service lifecycle actions run asynchronously to keep the Windows Forms UI responsive.
 
 ## Project layout
 
@@ -31,7 +32,7 @@
 - `Iis/` - IIS site discovery and deny-list operations
 - `Models/` - API, persistence, and workflow models
 - `wwwroot/` - dashboard UI assets
-- `Tests/iisidsd.Tests/` - detector, aggregation, and persistence tests
+- `Tests/iisidsd.Tests/` - dashboard access, detector, aggregation, and persistence tests
 
 ## Configuration
 
