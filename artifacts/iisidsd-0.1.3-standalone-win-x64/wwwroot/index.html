@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iisidsd dashboard</title>
+  <link rel="stylesheet" href="/site.css">
+</head>
+<body>
+  <header>
+    <h1>iisidsd monitoring dashboard</h1>
+    <span class="status" id="status">Connecting...</span>
+    <span class="risk-legend">Risk bands: Medium 1–3 · High 4–7 · Critical 8+</span>
+    <label><input id="all-events" type="checkbox">Show all events</label>
+  </header>
+  <nav id="domains"><button class="active" data-domain="*">All domains</button></nav>
+  <div class="view-tabs">
+    <button class="active" data-view="events">Events</button>
+    <button data-view="findings">Findings</button>
+    <button data-view="details">Details</button>
+    <button data-view="iis">IIS</button>
+  </div>
+  <main>
+    <section id="events-view" class="view active panel">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Client</th><th>Requests</th><th>Suspicious</th><th>Risk</th><th>Ban Count</th><th>Domain(s)</th><th>Path</th><th>Detection</th></tr></thead>
+          <tbody id="events"><tr><td colspan="9" class="empty">Waiting for ETW events...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    <section id="findings-view" class="view panel">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Client</th><th>Requests</th><th>Suspicious</th><th>Risk</th><th>Ban Count</th><th>Domain(s)</th><th>Path</th><th>Detection</th></tr></thead>
+          <tbody id="findings"><tr><td colspan="9" class="empty">Waiting for suspicious IP findings...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    <section id="details-view" class="view panel">
+      <div class="summary" id="finding-summary">Select a finding to inspect its recent events.</div>
+      <div class="actions">
+        <label for="ban-count-value">Ban count</label>
+        <input id="ban-count-value" type="number" min="0" step="1" value="0">
+        <button id="ban-count-save" type="button">Save ban count</button>
+        <button id="deny-target-sites" type="button">Deny on matched sites</button>
+        <span id="ban-count-status"></span>
+        <span id="deny-target-status"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Client</th><th>Requests</th><th>Suspicious</th><th>Risk</th><th>Ban Count</th><th>Domain(s)</th><th>Path</th><th>Detection</th></tr></thead>
+          <tbody id="finding-events"><tr><td colspan="9" class="empty">No finding selected.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    <section id="iis-view" class="view panel">
+      <div class="actions">
+        <label for="iis-site-select">Site</label>
+        <select id="iis-site-select"></select>
+        <button id="iis-refresh" type="button">Refresh sites</button>
+        <button id="iis-deny-selected" type="button">Deny selected finding IP</button>
+        <span id="iis-status"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Client</th><th>Requests</th><th>Suspicious</th><th>Risk</th><th>Ban Count</th><th>Domain(s)</th><th>Path</th><th>Detection</th></tr></thead>
+          <tbody id="iis-deny-list"><tr><td colspan="9" class="empty">No IIS site data loaded.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

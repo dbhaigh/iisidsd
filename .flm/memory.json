@@ -1,0 +1,6 @@
+{
+	"agent-activity": {
+		"content": "[{\"agent\":\"pi\",\"action\":\"started\",\"timestamp\":\"2026-10-01T18:23:42.697Z\"},{\"agent\":\"pi\",\"action\":\"completed\",\"timestamp\":\"2026-10-01T18:24:00.433Z\"}]",
+		"updatedAt": "2026-10-01T18:24:00.433Z"
+	}
+}
