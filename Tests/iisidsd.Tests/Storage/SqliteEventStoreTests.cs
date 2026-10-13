@@ -24,7 +24,6 @@ public sealed class SqliteEventStoreTests : IDisposable
         });
         var etwOptions = Options.Create(new IisEtwOptions
         {
-            RetentionLimit = 10,
             SubscriptionBufferSize = 8
         });
 

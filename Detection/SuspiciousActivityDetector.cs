@@ -10,6 +10,7 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
     private const int ExtensionHistoryLimit = 5000;
     private readonly DetectionOptions _options;
     private readonly IEventStore? _eventStore;
+    private readonly string[] _suspiciousUriFragments;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> _knownExtensionsByDomain = new(StringComparer.OrdinalIgnoreCase);
 
     public SuspiciousActivityDetector(IOptions<DetectionOptions> options)
@@ -21,11 +22,13 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
     {
         _options = options.Value;
         _eventStore = eventStore;
+        _suspiciousUriFragments = _options.SuspiciousPathFragments
+            .Where(static fragment => !string.IsNullOrWhiteSpace(fragment))
+            .Select(static fragment => fragment.ToLowerInvariant())
+            .ToArray();
     }
 
-    private static readonly HashSet<int> SuspiciousStatusCodes = [401, 403, 404];
     private static readonly HashSet<string> UnusualMethods = ["trace", "connect", "debug"];
-    private static readonly string[] SuspiciousUriFragments = ["../", "%2e", "wp-admin", "phpmyadmin", "/.env"];
     private static readonly string[] ScannerUserAgents = ["sqlmap", "nikto", "nmap", "masscan", "burp"];
 
     public SecurityEvent? Analyze(SecurityEvent webEvent)
@@ -38,11 +41,22 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
         var uri = (webEvent.Path ?? string.Empty).ToLowerInvariant();
         var agent = (webEvent.UserAgent ?? string.Empty).ToLowerInvariant();
 
-        if (SuspiciousStatusCodes.Contains(webEvent.StatusCode))
+        if (webEvent.StatusCode >= Math.Max(100, _options.MinimumSuspiciousStatusCode))
         {
             score += 1;
             reason = "probing/error response";
-            indicators.Add("suspicious status code (401/403/404)");
+            indicators.Add("status code meets configured suspicious threshold");
+        }
+
+        if (!string.IsNullOrEmpty(webEvent.Path) &&
+            webEvent.Path.Length >= Math.Max(1, _options.RequestPathLengthThreshold))
+        {
+            score += 2;
+            if (reason == "IIS ETW request")
+            {
+                reason = "unusually long request path";
+            }
+            indicators.Add("request path exceeds configured length threshold");
         }
 
         if (IsRepeatedNotFoundScan(webEvent))
@@ -59,7 +73,7 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
             indicators.Add("unusual HTTP method");
         }
 
-        if (SuspiciousUriFragments.Any(uri.Contains))
+        if (_suspiciousUriFragments.Any(uri.Contains))
         {
             score += 5;
             reason = "suspicious request URI";
@@ -68,7 +82,7 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
 
         if (IsUnrecognizedFileTypeRequest(webEvent))
         {
-            score += 4;
+            score += 2;
             if (reason is "IIS ETW request" or "probing/error response")
             {
                 reason = "unrecognized file type request";

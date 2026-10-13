@@ -10,6 +10,7 @@ public sealed class DetectionOptions
     public int NotFoundBurstLookbackLimit { get; set; } = 250;
     public string[] SuspiciousPathFragments { get; set; } =
     [
-        "../", "..\\", "/etc/passwd", "cmd.exe", "powershell", "<script", "union select", "xp_cmdshell"
+        "../", "..\\", "%2e", "wp-admin", "phpmyadmin", "/.env", "/etc/passwd",
+        "cmd.exe", "powershell", "<script", "union select", "xp_cmdshell"
     ];
 }

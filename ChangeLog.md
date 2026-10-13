@@ -1,5 +1,16 @@
 # Change Log
 
+## 0.1.3 - Unreleased
+
+### Security
+- Dashboard access is loopback-only by default; opt-in remote access requires Windows Authentication and HTTPS.
+- Ban-count and IIS write APIs require an authenticated Windows Administrator, and deny-list changes are disabled by default.
+- Automatic blocking now requires repeated 404 evidence or a critical event with multiple distinct indicators.
+
+### Changed
+- ETW capture uses a bounded ingestion queue so SQLite and IIS operations do not run on the ETW callback.
+- Detection thresholds and suspicious path fragments now use their documented configuration values.
+
 ## 0.1.2 - 2026-09-28
 
 ### Added
@@ -30,4 +41,3 @@
 ### Changed
 - Install service action now attempts to start the `iisidsd` service immediately after successful installation.
 - Documentation updates for tray service operations and release highlights.
-

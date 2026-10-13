@@ -1,4 +1,8 @@
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Negotiate;
+using Microsoft.AspNetCore.Authorization;
 using System.Runtime.InteropServices;
+using System.Net;
 using System.ServiceProcess;
 using System.Text.Json;
 using iisidsd.Configuration;
@@ -51,6 +55,13 @@ builder.Services.Configure<DetectionOptions>(builder.Configuration.GetSection(De
 builder.Services.Configure<TrayOptions>(builder.Configuration.GetSection(TrayOptions.SectionName));
 builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection(StorageOptions.SectionName));
 builder.Services.Configure<IisAdminOptions>(builder.Configuration.GetSection(IisAdminOptions.SectionName));
+builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme).AddNegotiate();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("DashboardAdministrator", policy =>
+        policy.RequireAuthenticatedUser()
+            .RequireAssertion(context => DashboardAccessPolicy.IsWindowsAdministrator(context.User)));
+});
 builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IBanCountService, BanCountService>();
 builder.Services.AddSingleton<IIpAggregationService, IpAggregationService>();
@@ -68,7 +79,35 @@ if (runWithTray)
 builder.Services.AddRouting();
 
 var webApp = builder.Build();
+var remoteAccessEnabled = builder.Configuration.GetValue<bool>("Dashboard:RemoteAccessEnabled");
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+webApp.UseAuthentication();
+webApp.Use(async (context, next) =>
+{
+    var localRequest = IsLocalRequest(context);
+    var localHealthCheck = localRequest &&
+        string.Equals(context.Request.Path.Value, "/health", StringComparison.OrdinalIgnoreCase);
+    var accessDecision = DashboardAccessPolicy.Evaluate(
+        remoteAccessEnabled,
+        localRequest,
+        context.Request.IsHttps,
+        localHealthCheck);
+    if (accessDecision == DashboardAccessDecision.Forbidden)
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return;
+    }
+
+    if (accessDecision == DashboardAccessDecision.AuthenticationRequired &&
+        context.User.Identity?.IsAuthenticated != true)
+    {
+        await context.ChallengeAsync();
+        return;
+    }
+
+    await next();
+});
+webApp.UseAuthorization();
 webApp.UseDefaultFiles();
 webApp.UseStaticFiles();
 
@@ -103,7 +142,7 @@ webApp.MapPut("/api/ban-counts/{clientIp}", (IBanCountService banCountService, s
     }
 
     return Results.Ok(banCountService.SetBanCount(clientIp, request.BanCount, domain));
-});
+}).RequireAuthorization("DashboardAdministrator");
 
 webApp.MapGet("/api/iis/sites", (IIisSiteDiscoveryService siteDiscoveryService) =>
     Results.Ok(siteDiscoveryService.GetSites()));
@@ -137,7 +176,7 @@ webApp.MapPost("/api/iis/sites/{siteName}/deny-list", (IIisDenyListService denyL
     banCountService.IncrementBanCounts(request.ClientIp, siteDomains ?? []);
 
     return Results.Ok(new { siteName, clientIp = request.ClientIp, denied = true });
-});
+}).RequireAuthorization("DashboardAdministrator");
 
 webApp.MapPost("/api/iis/deny-list", (IIisDenyListService denyListService, IIisSiteDiscoveryService siteDiscoveryService, IIpAggregationService aggregationService, IBanCountService banCountService, IOptions<IisAdminOptions> adminOptions, DeniedIpUpdateRequest request) =>
 {
@@ -176,7 +215,7 @@ webApp.MapPost("/api/iis/deny-list", (IIisDenyListService denyListService, IIisS
     banCountService.IncrementBanCounts(request.ClientIp, domainsToIncrement);
 
     return Results.Ok(new { clientIp = request.ClientIp, domains = domainsToIncrement, sites = updatedSites, denied = true });
-});
+}).RequireAuthorization("DashboardAdministrator");
 
 webApp.MapDelete("/api/iis/sites/{siteName}/deny-list/{clientIp}", (IIisDenyListService denyListService, IOptions<IisAdminOptions> adminOptions, string siteName, string clientIp) =>
 {
@@ -188,7 +227,7 @@ webApp.MapDelete("/api/iis/sites/{siteName}/deny-list/{clientIp}", (IIisDenyList
     return denyListService.RemoveDeniedIp(siteName, clientIp)
         ? Results.Ok(new { siteName, clientIp, denied = false })
         : Results.Problem($"Unable to remove deny-list entry for '{clientIp}' on '{siteName}'.");
-});
+}).RequireAuthorization("DashboardAdministrator");
 
 webApp.MapGet("/api/events/stream", async (HttpContext context, IEventStore store, string? clientIp, string? domain, bool? suspiciousOnly) =>
 {
@@ -221,6 +260,19 @@ webApp.MapGet("/api/events/stream", async (HttpContext context, IEventStore stor
 webApp.MapFallbackToFile("index.html");
 
 webApp.Run();
+
+static bool IsLocalRequest(HttpContext context)
+{
+    var remoteAddress = context.Connection.RemoteIpAddress;
+    if (remoteAddress is null)
+    {
+        return false;
+    }
+
+    return remoteAddress.IsIPv4MappedToIPv6
+        ? IPAddress.IsLoopback(remoteAddress.MapToIPv4())
+        : IPAddress.IsLoopback(remoteAddress);
+}
 
 static bool IsServiceRunning(string serviceName)
 {

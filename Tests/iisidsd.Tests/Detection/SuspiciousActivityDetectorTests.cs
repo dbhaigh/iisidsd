@@ -77,7 +77,8 @@ public sealed class SuspiciousActivityDetectorTests
 
         Assert.NotNull(suspiciousEvent);
         Assert.Equal("unrecognized file type request", suspiciousEvent.DetectionReason);
-        Assert.Equal(4, suspiciousEvent.RiskScore);
+        Assert.Equal(3, suspiciousEvent.RiskScore);
+        Assert.Equal("Medium", suspiciousEvent.RiskSeverity);
     }
 
     [Fact]
@@ -126,7 +127,8 @@ public sealed class SuspiciousActivityDetectorTests
 
         Assert.NotNull(suspiciousEvent);
         Assert.Equal("unrecognized file type request", suspiciousEvent.DetectionReason);
-        Assert.Equal(5, suspiciousEvent.RiskScore);
+        Assert.Equal(3, suspiciousEvent.RiskScore);
+        Assert.Equal("Medium", suspiciousEvent.RiskSeverity);
     }
 
     [Fact]
@@ -155,6 +157,35 @@ public sealed class SuspiciousActivityDetectorTests
         Assert.Equal(4, suspiciousEvent.RiskScore);
         Assert.Equal("High", suspiciousEvent.RiskSeverity);
         Assert.Contains("multiple 404 responses from the same client IP", suspiciousEvent.RiskIndicators ?? []);
+    }
+
+    [Fact]
+    public void Analyze_UsesConfiguredStatusPathAndUriThresholds()
+    {
+        var detector = new SuspiciousActivityDetector(Options.Create(new DetectionOptions
+        {
+            MinimumSuspiciousStatusCode = 500,
+            RequestPathLengthThreshold = 5,
+            SuspiciousPathFragments = ["custom-marker"]
+        }));
+        var webEvent = new SecurityEvent(
+            DateTimeOffset.UtcNow,
+            "server01",
+            "example.test",
+            "GET",
+            "/custom-marker",
+            "203.0.113.52",
+            404,
+            "unit-test",
+            new Dictionary<string, string>());
+
+        var suspiciousEvent = detector.Analyze(webEvent);
+
+        Assert.NotNull(suspiciousEvent);
+        Assert.Equal(7, suspiciousEvent.RiskScore);
+        Assert.Contains("request path exceeds configured length threshold", suspiciousEvent.RiskIndicators ?? []);
+        Assert.DoesNotContain("status code meets configured suspicious threshold", suspiciousEvent.RiskIndicators ?? []);
+        Assert.Contains("suspicious request URI pattern", suspiciousEvent.RiskIndicators ?? []);
     }
 
     private sealed class FakeEventStore(IReadOnlyList<SecurityEvent> events) : IEventStore

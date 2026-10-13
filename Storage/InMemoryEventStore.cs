@@ -6,16 +6,17 @@ using Microsoft.Extensions.Options;
 
 namespace iisidsd.Storage;
 
-public sealed class InMemoryEventStore(IOptions<IisEtwOptions> options) : IEventStore
+public sealed class InMemoryEventStore(IOptions<IisEtwOptions> etwOptions, IOptions<StorageOptions> storageOptions) : IEventStore
 {
-    private readonly IisEtwOptions _options = options.Value;
+    private readonly int _retentionLimit = Math.Max(1, storageOptions.Value.EventRetentionLimit);
+    private readonly int _subscriptionBufferSize = Math.Max(1, etwOptions.Value.SubscriptionBufferSize);
     private readonly LinkedList<SecurityEvent> _events = [];
     private readonly Lock _sync = new();
     private readonly ConcurrentDictionary<Guid, Channel<SecurityEvent>> _subscribers = [];
 
     public IReadOnlyList<SecurityEvent> GetRecent(int limit, string? clientIp = null, string? domain = null, bool suspiciousOnly = false)
     {
-        limit = Math.Clamp(limit, 1, _options.RetentionLimit);
+        limit = Math.Clamp(limit, 1, _retentionLimit);
         lock (_sync)
         {
             return _events
@@ -33,7 +34,7 @@ public sealed class InMemoryEventStore(IOptions<IisEtwOptions> options) : IEvent
         lock (_sync)
         {
             _events.AddLast(webEvent);
-            while (_events.Count > _options.RetentionLimit)
+            while (_events.Count > _retentionLimit)
             {
                 _events.RemoveFirst();
             }
@@ -47,7 +48,7 @@ public sealed class InMemoryEventStore(IOptions<IisEtwOptions> options) : IEvent
 
     public ChannelReader<SecurityEvent> Subscribe(CancellationToken cancellationToken)
     {
-        var channel = Channel.CreateBounded<SecurityEvent>(new BoundedChannelOptions(_options.SubscriptionBufferSize)
+        var channel = Channel.CreateBounded<SecurityEvent>(new BoundedChannelOptions(_subscriptionBufferSize)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,

@@ -11,11 +11,7 @@ public sealed class IisAutoDenyService(
     IOptions<IisAdminOptions> adminOptions,
     ILogger<IisAutoDenyService> logger) : IIisAutoDenyService
 {
-    private static readonly HashSet<string> AutoDenySeverities = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "High",
-        "Critical"
-    };
+    private const string RepeatedNotFoundIndicator = "multiple 404 responses from the same client IP";
 
     public void Apply(SecurityEvent securityEvent)
     {
@@ -24,7 +20,11 @@ public sealed class IisAutoDenyService(
             return;
         }
 
-        if (!securityEvent.IsSuspicious || !AutoDenySeverities.Contains(securityEvent.RiskSeverity))
+        var indicators = securityEvent.RiskIndicators ?? [];
+        var repeatedNotFound = indicators.Contains(RepeatedNotFoundIndicator, StringComparer.Ordinal);
+        var corroboratedCritical = string.Equals(securityEvent.RiskSeverity, "Critical", StringComparison.OrdinalIgnoreCase) &&
+            indicators.Distinct(StringComparer.Ordinal).Skip(1).Any();
+        if (!securityEvent.IsSuspicious || (!repeatedNotFound && !corroboratedCritical))
         {
             return;
         }

@@ -11,7 +11,9 @@ public sealed class IpAggregationServiceTests
     [Fact]
     public void GetFindings_GroupsEventsAndAppliesBanCounts()
     {
-        var eventStore = new InMemoryEventStore(Options.Create(new IisEtwOptions { RetentionLimit = 100, SubscriptionBufferSize = 10 }));
+        var eventStore = new InMemoryEventStore(
+            Options.Create(new IisEtwOptions { SubscriptionBufferSize = 10 }),
+            Options.Create(new StorageOptions { EventRetentionLimit = 100 }));
         var suspiciousEvent = new SecurityEvent(
             DateTimeOffset.UtcNow.AddMinutes(-1),
             "server01",
@@ -64,7 +66,9 @@ public sealed class IpAggregationServiceTests
     [Fact]
     public void GetFindings_UsesDomainScopedBanCountsWhenFiltered()
     {
-        var eventStore = new InMemoryEventStore(Options.Create(new IisEtwOptions { RetentionLimit = 100, SubscriptionBufferSize = 10 }));
+        var eventStore = new InMemoryEventStore(
+            Options.Create(new IisEtwOptions { SubscriptionBufferSize = 10 }),
+            Options.Create(new StorageOptions { EventRetentionLimit = 100 }));
         eventStore.Publish(new SecurityEvent(
             DateTimeOffset.UtcNow.AddMinutes(-1),
             "server01",

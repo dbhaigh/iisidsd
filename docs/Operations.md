@@ -22,7 +22,8 @@ Important detection behavior:
 
 - repeated `404` responses from the same client IP are treated as exploit-probing/scanning behavior
 - this repeated-not-found signal adds extra risk and can raise an event to `High` severity
-- `High` and `Critical` suspicious events are eligible for automatic deny-list updates when `IisAdmin:EnableDenyListChanges=true`
+- automatic deny-list updates require this repeated-not-found signal or a `Critical` event with at least two distinct indicators
+- unfamiliar file extensions contribute risk but cannot independently make an event eligible for automatic blocking
 
 Each finding includes:
 
@@ -105,11 +106,20 @@ The notification-area icon now exposes service lifecycle actions:
 Notes:
 
 - Service operations require administrative privileges.
-- Install now attempts to start the service immediately after creation.
+- Install configures automatic startup and Windows Service Control Manager recovery actions, then attempts to start the service immediately.
+- Starting an existing service refreshes its automatic-start and recovery configuration.
+- Unexpected service failures trigger restart attempts after 5, 15, and 60 seconds.
 - Install/service management also registers a Startup scheduled task (`iisidsd Tray Companion`) to launch tray companion mode at user logon.
 - When the service is already running, interactive launches switch directly to tray companion mode.
 - During install/start from a full interactive host, the dashboard remains available while handoff completes, then the original host closes gracefully after readiness checks.
-- Menu options are enabled or disabled automatically from current service state.
+- Stop and restart wait for the Windows service to stop gracefully; restart waits for the dashboard health endpoint before reporting success.
+- The context menu reports Windows service state and dashboard health separately. Lifecycle actions are enabled only for stable service states.
+
+## Dashboard network access
+
+The dashboard binds to `http://127.0.0.1:5080` by default and rejects non-loopback clients. For remote access, explicitly set `Dashboard:RemoteAccessEnabled=true`, bind `Urls` to an HTTPS address, configure a Kestrel certificate, and allow the port only from intended clients through Windows Firewall. Remote clients must authenticate with Windows Authentication; remote HTTP requests are rejected.
+
+Ban-count and IIS deny-list write APIs require an authenticated Windows Administrator, including for local requests. IIS deny-list changes additionally require `IisAdmin:EnableDenyListChanges=true`; this setting is disabled by default. Do not expose the listener through a reverse proxy unless remote access is enabled and the proxy preserves the required authentication and TLS protections.
 
 ## Recommended runbook
 

@@ -548,7 +548,11 @@ async function saveBanCount() {
   });
 
   if (!response.ok) {
-    banCountStatus.textContent = 'Save failed.';
+    banCountStatus.textContent = response.status === 401
+      ? 'Windows Authentication is required.'
+      : response.status === 403
+        ? 'Administrator access or an enabled remote-access configuration is required.'
+        : 'Save failed.';
     return;
   }
 
@@ -576,8 +580,13 @@ async function denyFindingOnMatchedSites() {
     body: JSON.stringify({ clientIp: finding.clientIp })
   });
 
+  if (response.status === 401) {
+    denyTargetStatus.textContent = 'Windows Authentication is required.';
+    return;
+  }
+
   if (response.status === 403) {
-    denyTargetStatus.textContent = 'Enable IisAdmin:EnableDenyListChanges to modify deny lists.';
+    denyTargetStatus.textContent = 'Access denied. Check administrator access, HTTPS/remote-access settings, and IisAdmin:EnableDenyListChanges.';
     return;
   }
 
@@ -663,8 +672,13 @@ async function denySelectedFindingIp() {
     body: JSON.stringify({ clientIp: state.selectedFindingIp })
   });
 
+  if (response.status === 401) {
+    iisStatus.textContent = 'Windows Authentication is required.';
+    return;
+  }
+
   if (response.status === 403) {
-    iisStatus.textContent = 'Enable IisAdmin:EnableDenyListChanges to modify deny lists.';
+    iisStatus.textContent = 'Access denied. Check administrator access, HTTPS/remote-access settings, and IisAdmin:EnableDenyListChanges.';
     return;
   }
 
@@ -689,8 +703,13 @@ async function removeDeniedIp(clientIp) {
     method: 'DELETE'
   });
 
+  if (response.status === 401) {
+    iisStatus.textContent = 'Windows Authentication is required.';
+    return;
+  }
+
   if (response.status === 403) {
-    iisStatus.textContent = 'Enable IisAdmin:EnableDenyListChanges to modify deny lists.';
+    iisStatus.textContent = 'Access denied. Check administrator access, HTTPS/remote-access settings, and IisAdmin:EnableDenyListChanges.';
     return;
   }
 

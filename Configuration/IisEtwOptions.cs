@@ -8,6 +8,6 @@ public sealed class IisEtwOptions
     public string ProviderName { get; set; } = "Microsoft-Windows-IIS-Logging";
     public Guid ProviderId { get; set; } = Guid.Parse("7e8ad27f-b271-4ea2-a783-a47bde29143b");
     public string SessionName { get; set; } = "iisidsd-iis-logging";
-    public int RetentionLimit { get; set; } = 10_000;
     public int SubscriptionBufferSize { get; set; } = 1_000;
+    public int IngestionBufferSize { get; set; } = 10_000;
 }

@@ -14,11 +14,12 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls
 
-## Release 0.1.2 highlights
+## Release 0.1.3 highlights
 
-- Added repeated `404 Not Found` burst detection per client IP to better identify exploit scanning.
-- Added configurable thresholds for repeated-404 heuristics: `Detection:NotFoundBurstThreshold` and `Detection:NotFoundBurstLookbackLimit`.
-- Repeated `404` probing now raises risk and can move findings into `High` severity, enabling automatic deny-list updates when IIS admin writes are enabled.
+- Dashboard access is loopback-only by default. Optional remote access requires Windows Authentication and HTTPS.
+- Ban-count and IIS deny-list HTTP writes require an authenticated Windows Administrator; deny-list changes also require `IisAdmin:EnableDenyListChanges`.
+- Automatic IIS blocking requires a repeated-404 signal or a critical event with multiple distinct indicators.
+- ETW capture is decoupled from database and IIS operations through a bounded ingestion queue.
 
 ## Project layout
 
@@ -44,8 +45,8 @@ Controls ETW ingestion.
 - `ProviderName`
 - `ProviderId`
 - `SessionName`
-- `RetentionLimit`
 - `SubscriptionBufferSize`
+- `IngestionBufferSize`
 
 ### `Detection`
 
@@ -77,6 +78,14 @@ Controls the notification-area shortcut.
 
 - `BrowserUrl`
 
+### Dashboard network access
+
+The `Urls` setting controls the dashboard listener. The default listens only on loopback at `http://127.0.0.1:5080/`.
+
+By default `Urls` is `http://127.0.0.1:5080` and non-loopback requests are rejected, even if the listener is rebound externally. To enable remote access, set `Dashboard:RemoteAccessEnabled` to `true`, bind `Urls` to an HTTPS address, and configure a Kestrel server certificate using the standard Kestrel certificate settings. Remote requests require Windows Authentication and HTTPS. Do not put certificate passwords in source-controlled configuration.
+
+When remote access is enabled, the dashboard requires Windows Authentication. Ban-count and IIS deny-list write APIs additionally require the caller to be a member of the local Windows Administrators group. IIS deny-list changes also require `IisAdmin:EnableDenyListChanges=true`, which is disabled by default. Restrict inbound firewall rules to the intended clients.
+
 ## Running locally
 
 Requirements:
@@ -91,7 +100,9 @@ Run:
 - `dotnet build`
 - `dotnet run --project iisidsd.csproj`
 
-The dashboard is served from the configured `Urls` value in `appsettings.json`.
+The dashboard is served from the configured `Urls` value in `appsettings.json`. Remote access must also be explicitly enabled and served over HTTPS.
+
+Installing the Windows service through the tray configures automatic startup and service recovery restarts. The tray menu reports both service state and dashboard health.
 
 ## Dashboard views
 

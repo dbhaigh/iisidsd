@@ -80,11 +80,15 @@ public sealed class TrayIconService(
         private readonly IHostApplicationLifetime _applicationLifetime;
         private readonly ILogger _logger;
         private readonly ToolStripMenuItem _installService;
+        private readonly ToolStripMenuItem _serviceStatusItem;
+        private readonly ToolStripMenuItem _dashboardStatusItem;
         private readonly ToolStripMenuItem _startService;
         private readonly ToolStripMenuItem _stopService;
         private readonly ToolStripMenuItem _restartService;
         private readonly ToolStripMenuItem _uninstallService;
         private readonly System.Windows.Forms.Timer _serviceStateTimer;
+        private readonly HttpClient _healthClient = new() { Timeout = TimeSpan.FromSeconds(2) };
+        private bool _healthCheckInProgress;
         private readonly bool _trayOnlyProcess = Environment.GetCommandLineArgs()
             .Any(arg => string.Equals(arg, "--tray-only", StringComparison.OrdinalIgnoreCase));
 
@@ -95,6 +99,11 @@ public sealed class TrayIconService(
             _logger = logger;
 
             var menu = new ContextMenuStrip();
+            _serviceStatusItem = new ToolStripMenuItem("Service: Checking") { Enabled = false };
+            _dashboardStatusItem = new ToolStripMenuItem("Dashboard: Checking") { Enabled = false };
+            menu.Items.Add(_serviceStatusItem);
+            menu.Items.Add(_dashboardStatusItem);
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Open dashboard", null, (_, _) => OpenDashboard());
             menu.Items.Add(new ToolStripSeparator());
             _installService = new ToolStripMenuItem("Install service", null, (_, _) => InstallService());
@@ -129,14 +138,48 @@ public sealed class TrayIconService(
         private void UpdateServiceMenuState()
         {
             var installed = TryGetServiceStatus(out var status);
-            var running = status is ServiceControllerStatus.Running;
+            _serviceStatusItem.Text = $"Service: {(installed ? status?.ToString() ?? "Unknown" : "Not installed")}";
             var administrator = IsAdministrator();
 
             _installService.Enabled = administrator && !installed;
-            _startService.Enabled = administrator && installed && !running;
-            _stopService.Enabled = administrator && installed && running;
-            _restartService.Enabled = administrator && installed && running;
+            _startService.Enabled = administrator && installed && status == ServiceControllerStatus.Stopped;
+            _stopService.Enabled = administrator && installed && status == ServiceControllerStatus.Running;
+            _restartService.Enabled = administrator && installed && status == ServiceControllerStatus.Running;
             _uninstallService.Enabled = administrator && installed;
+            _ = RefreshDashboardStatusAsync();
+        }
+
+        private async Task RefreshDashboardStatusAsync()
+        {
+            if (_healthCheckInProgress)
+            {
+                return;
+            }
+
+            _healthCheckInProgress = true;
+            try
+            {
+                if (Uri.TryCreate(_browserUrl, UriKind.Absolute, out var baseUri))
+                {
+                    using var response = await _healthClient.GetAsync(new Uri(baseUri, "health"));
+                    _dashboardStatusItem.Text = response.IsSuccessStatusCode
+                        ? "Dashboard: Available"
+                        : $"Dashboard: Unavailable (HTTP {(int)response.StatusCode})";
+                }
+                else
+                {
+                    _dashboardStatusItem.Text = "Dashboard: Unavailable (invalid URL)";
+                }
+            }
+            catch (Exception exception)
+            {
+                _dashboardStatusItem.Text = "Dashboard: Unavailable";
+                _logger.LogDebug(exception, "Unable to query dashboard health at {Url}.", _browserUrl);
+            }
+            finally
+            {
+                _healthCheckInProgress = false;
+            }
         }
 
         private static bool IsAdministrator()
@@ -164,18 +207,14 @@ public sealed class TrayIconService(
         }
 
         private void InstallService()
-        {
-            StartServiceWithShutdown("Install service");
-        }
+            => _ = ExecuteServiceOperationAsync("Install service", () => StartServiceWithShutdownAsync("Install service"));
 
         private void StartService()
-        {
-            StartServiceWithShutdown("Start service");
-        }
+            => _ = ExecuteServiceOperationAsync("Start service", () => StartServiceWithShutdownAsync("Start service"));
 
-        private void StartServiceWithShutdown(string operation)
+        private async Task StartServiceWithShutdownAsync(string operation)
         {
-            if (!EnsureServiceInstalled())
+            if (!await Task.Run(EnsureServiceInstalled))
             {
                 ShowResult(operation, false, "Run as Administrator to manage Windows services.");
                 return;
@@ -183,18 +222,20 @@ public sealed class TrayIconService(
 
             if (_trayOnlyProcess)
             {
-                var started = RunScCommand($"start {ServiceName}") || ScheduleDetachedStartRetries();
+                var started = await Task.Run(() =>
+                    RunScCommand($"start {ServiceName}") || ScheduleDetachedStartRetries());
+                started = started && await WaitForServiceDashboardReadyAsync(TimeSpan.FromSeconds(60));
                 ShowResult(operation, started, "Run as Administrator to manage Windows services.");
                 return;
             }
 
-            if (!ScheduleDetachedStartRetries())
+            if (!await Task.Run(ScheduleDetachedStartRetries))
             {
                 ShowResult(operation, false, "Run as Administrator to manage Windows services.");
                 return;
             }
 
-            _ = LaunchTrayCompanion();
+            _ = await Task.Run(LaunchTrayCompanion);
             BeginGracefulShutdownAfterServiceReady();
 
             MessageBox.Show(
@@ -205,32 +246,90 @@ public sealed class TrayIconService(
         }
 
         private void StopService()
-        {
-            var success = RunScCommand($"stop {ServiceName}");
-            ShowResult("Stop service", success, "Run as Administrator to manage Windows services.");
-        }
+            => _ = ExecuteServiceOperationAsync("Stop service", async () =>
+            {
+                var success = await Task.Run(() => StopServiceAndWait(TimeSpan.FromSeconds(60)));
+                ShowResult("Stop service", success, "Run as Administrator to manage Windows services.");
+            });
 
         private void RestartService()
+            => _ = ExecuteServiceOperationAsync("Restart service", async () =>
+            {
+                var stopped = await Task.Run(() => StopServiceAndWait(TimeSpan.FromSeconds(60)));
+                var started = stopped && await Task.Run(() => RunScCommand($"start {ServiceName}"));
+                started = started && await WaitForServiceDashboardReadyAsync(TimeSpan.FromSeconds(60));
+                ShowResult("Restart service", started, "Run as Administrator to manage Windows services.");
+            });
+
+        private bool StopServiceAndWait(TimeSpan timeout)
         {
-            var stopped = RunScCommand($"stop {ServiceName}");
-            var started = stopped && RunScCommand($"start {ServiceName}");
-            ShowResult("Restart service", started, "Run as Administrator to manage Windows services.");
+            if (!TryGetServiceStatus(out var status))
+            {
+                return false;
+            }
+
+            if (status == ServiceControllerStatus.Stopped)
+            {
+                return true;
+            }
+
+            if (status != ServiceControllerStatus.Running)
+            {
+                return false;
+            }
+
+            if (!RunScCommand($"stop {ServiceName}"))
+            {
+                return false;
+            }
+
+            return WaitForServiceStatus(ServiceControllerStatus.Stopped, timeout);
+        }
+
+        private bool WaitForServiceStatus(ServiceControllerStatus targetStatus, TimeSpan timeout)
+        {
+            try
+            {
+                using var service = new ServiceController(ServiceName);
+                service.WaitForStatus(targetStatus, timeout);
+                service.Refresh();
+                return service.Status == targetStatus;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "Service {ServiceName} did not reach state {Status} within {Timeout}.", ServiceName, targetStatus, timeout);
+                return false;
+            }
         }
 
         private void UninstallService()
+            => _ = ExecuteServiceOperationAsync("Uninstall service", async () =>
+            {
+                var success = await Task.Run(() =>
+                    StopServiceAndWait(TimeSpan.FromSeconds(60)) &&
+                    RunScCommand($"delete {ServiceName}") &&
+                    RemoveTrayCompanionAutoStart());
+                ShowResult("Uninstall service", success, "Run as Administrator to manage Windows services.");
+            });
+
+        private async Task ExecuteServiceOperationAsync(string operation, Func<Task> action)
         {
-            _ = RunScCommand($"stop {ServiceName}");
-            var serviceDeleted = RunScCommand($"delete {ServiceName}");
-            var startupRemoved = RemoveTrayCompanionAutoStart();
-            var success = serviceDeleted && startupRemoved;
-            ShowResult("Uninstall service", success, "Run as Administrator to manage Windows services.");
+            try
+            {
+                await action();
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Service operation {Operation} failed unexpectedly.", operation);
+                ShowResult(operation, false, "See the application log for details.");
+            }
         }
 
         private bool EnsureServiceInstalled()
         {
             if (TryGetServiceStatus(out _))
             {
-                return EnsureTrayCompanionAutoStart();
+                return EnsureServiceStartupAndRecovery() && EnsureTrayCompanionAutoStart();
             }
 
             var processPath = ResolveServiceProcessPath();
@@ -245,7 +344,14 @@ public sealed class TrayIconService(
                 return false;
             }
 
-            return EnsureTrayCompanionAutoStart();
+            return EnsureServiceStartupAndRecovery() && EnsureTrayCompanionAutoStart();
+        }
+
+        private bool EnsureServiceStartupAndRecovery()
+        {
+            return RunScCommand($"config {ServiceName} start= auto") &&
+                RunScCommand($"failure {ServiceName} reset= 86400 actions= restart/5000/restart/15000/restart/60000") &&
+                RunScCommand($"failureflag {ServiceName} 1");
         }
 
         private bool ScheduleDetachedStartRetries()
@@ -374,7 +480,6 @@ public sealed class TrayIconService(
         private async Task<bool> WaitForServiceDashboardReadyAsync(TimeSpan timeout)
         {
             var deadline = DateTime.UtcNow + timeout;
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
 
             while (DateTime.UtcNow < deadline)
             {
@@ -384,15 +489,20 @@ public sealed class TrayIconService(
                     {
                         if (Uri.TryCreate(_browserUrl, UriKind.Absolute, out var baseUri))
                         {
-                            using var response = await client.GetAsync(new Uri(baseUri, "health"));
+                            using var response = await _healthClient.GetAsync(new Uri(baseUri, "health"));
                             if (response.IsSuccessStatusCode)
                             {
                                 return true;
                             }
                         }
                     }
-                    catch
+                    catch (HttpRequestException exception)
                     {
+                        _logger.LogDebug(exception, "Dashboard readiness check failed at {Url}.", _browserUrl);
+                    }
+                    catch (TaskCanceledException exception)
+                    {
+                        _logger.LogDebug(exception, "Dashboard readiness check timed out at {Url}.", _browserUrl);
                     }
                 }
 
@@ -486,6 +596,7 @@ public sealed class TrayIconService(
             {
                 _serviceStateTimer.Stop();
                 _serviceStateTimer.Dispose();
+                _healthClient.Dispose();
                 _icon.Visible = false;
                 _icon.Dispose();
             }

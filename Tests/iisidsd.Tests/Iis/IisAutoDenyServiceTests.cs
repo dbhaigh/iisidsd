@@ -10,7 +10,7 @@ namespace iisidsd.Tests.Iis;
 public sealed class IisAutoDenyServiceTests
 {
     [Fact]
-    public void Apply_HighSeverityEvent_AddsToDenyListAndIncrementsBanCount()
+    public void Apply_HighSeverityWithoutRepeatedEvidence_DoesNothing()
     {
         var denyListService = new FakeIisDenyListService(["example.test-site"]);
         var banCountService = new FakeBanCountService();
@@ -37,14 +37,74 @@ public sealed class IisAutoDenyServiceTests
 
         service.Apply(securityEvent);
 
+        Assert.Empty(denyListService.Requests);
+        Assert.Empty(banCountService.IncrementRequests);
+    }
+
+    [Fact]
+    public void Apply_RepeatedNotFoundEvidence_AddsToDenyListAndIncrementsBanCount()
+    {
+        var denyListService = new FakeIisDenyListService(["example.test-site"]);
+        var banCountService = new FakeBanCountService();
+        var service = new IisAutoDenyService(
+            denyListService,
+            banCountService,
+            Options.Create(new IisAdminOptions { EnableDenyListChanges = true }),
+            NullLogger<IisAutoDenyService>.Instance);
+        var securityEvent = new SecurityEvent(
+            DateTimeOffset.UtcNow,
+            "server01",
+            "example.test",
+            "GET",
+            "/missing",
+            "203.0.113.7",
+            404,
+            "unit-test",
+            new Dictionary<string, string>(),
+            IsSuspicious: true,
+            DetectionReason: "repeated not found probing",
+            RiskScore: 4,
+            RiskSeverity: "High",
+            RiskIndicators: ["suspicious status code", "multiple 404 responses from the same client IP"]);
+
+        service.Apply(securityEvent);
+
         Assert.Single(denyListService.Requests);
         Assert.Equal("203.0.113.7", denyListService.Requests[0].ClientIp);
-        Assert.Single(denyListService.Requests[0].Domains);
-        Assert.Equal("example.test", denyListService.Requests[0].Domains[0]);
+        Assert.Equal("example.test", Assert.Single(denyListService.Requests[0].Domains));
         Assert.Single(banCountService.IncrementRequests);
-        Assert.Equal("203.0.113.7", banCountService.IncrementRequests[0].ClientIp);
-        Assert.Single(banCountService.IncrementRequests[0].Domains);
-        Assert.Equal("example.test", banCountService.IncrementRequests[0].Domains[0]);
+    }
+
+    [Fact]
+    public void Apply_CriticalEventWithMultipleIndicators_AddsToDenyList()
+    {
+        var denyListService = new FakeIisDenyListService(["example.test-site"]);
+        var banCountService = new FakeBanCountService();
+        var service = new IisAutoDenyService(
+            denyListService,
+            banCountService,
+            Options.Create(new IisAdminOptions { EnableDenyListChanges = true }),
+            NullLogger<IisAutoDenyService>.Instance);
+        var securityEvent = new SecurityEvent(
+            DateTimeOffset.UtcNow,
+            "server01",
+            "example.test",
+            "TRACE",
+            "/.env",
+            "203.0.113.7",
+            404,
+            "sqlmap/1.0",
+            new Dictionary<string, string>(),
+            IsSuspicious: true,
+            DetectionReason: "known security scanner user-agent",
+            RiskScore: 12,
+            RiskSeverity: "Critical",
+            RiskIndicators: ["suspicious status", "suspicious request URI pattern", "known scanner user-agent"]);
+
+        service.Apply(securityEvent);
+
+        Assert.Single(denyListService.Requests);
+        Assert.Single(banCountService.IncrementRequests);
     }
 
     [Fact]
