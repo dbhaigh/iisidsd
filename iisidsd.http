@@ -1,5 +1,21 @@
 @baseUrl = http://127.0.0.1:5080
 
+### Read supported non-secret backend configuration (Windows Administrator)
+GET {{baseUrl}}/api/configuration
+Accept: application/json
+
+### Partially update backend configuration; restart the service to apply (Windows Administrator)
+PATCH {{baseUrl}}/api/configuration
+Content-Type: application/json
+
+{
+  "settings": {
+    "Detection": {
+      "RateThreshold": 90
+    }
+  }
+}
+
 ### Dashboard health, including ETW queue and SQLite status
 GET {{baseUrl}}/health
 Accept: application/json

@@ -26,6 +26,7 @@ if (!RuntimePrerequisiteChecker.EnsureRuntimeAvailable())
     return;
 }
 
+var executableDirectory = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
 var filteredArgs = args
     .Where(arg =>
         !string.Equals(arg, "--tray-only", StringComparison.OrdinalIgnoreCase) &&
@@ -47,7 +48,7 @@ if (trayOnlyMode)
     var trayBuilder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
     {
         Args = filteredArgs,
-        ContentRootPath = AppContext.BaseDirectory
+        ContentRootPath = executableDirectory
     });
     trayBuilder.Services.AddIisIdsdOptions(trayBuilder.Configuration);
     trayBuilder.Services.AddHostedService<TrayIconService>();
@@ -61,16 +62,24 @@ var isWindowsService = OperatingSystem.IsWindows() && !Environment.UserInteracti
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = filteredArgs,
-    ContentRootPath = isWindowsService ? AppContext.BaseDirectory : null,
-    WebRootPath = isWindowsService ? Path.Combine(AppContext.BaseDirectory, "wwwroot") : null
+    ContentRootPath = isWindowsService ? executableDirectory : null,
+    WebRootPath = isWindowsService ? Path.Combine(executableDirectory, "wwwroot") : null
 });
+var configuredUrls = builder.Configuration["Urls"];
+if (!string.IsNullOrWhiteSpace(configuredUrls))
+{
+    builder.WebHost.UseUrls(configuredUrls);
+}
+
 builder.Host.UseWindowsService(options =>
 {
     options.ServiceName = "iisidsd";
 });
 builder.Services.AddIisIdsdOptions(builder.Configuration);
+builder.Services.AddOpenApi();
 builder.Services.AddSingleton<IisObservability>();
 builder.Services.AddSingleton<SqliteHealthProbe>();
+builder.Services.AddSingleton<IBackendConfigurationStore, BackendConfigurationStore>();
 
 Uri? otlpEndpoint = null;
 var configuredOtlpEndpoint = builder.Configuration["OpenTelemetry:OtlpEndpoint"];
@@ -150,7 +159,13 @@ webApp.UseAuthorization();
 webApp.UseDefaultFiles();
 webApp.UseStaticFiles();
 
+if (webApp.Environment.IsDevelopment())
+{
+    webApp.MapOpenApi();
+}
+
 webApp.MapDashboardEndpoints(jsonOptions);
+webApp.MapBackendConfigurationEndpoints();
 
 webApp.MapFallbackToFile("index.html");
 

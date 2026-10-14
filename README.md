@@ -14,6 +14,12 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls
 
+## Release 0.2.2 highlights
+
+- Windows service and single-file launches serve the dashboard and assets from beside the executable and honor the configured `Urls` listener address.
+- Administrators can edit supported non-secret backend settings from the dashboard. Changes are validated, credentials are redacted, and a service restart is required to apply them.
+- The standalone Windows x64 package contains only the executable, `appsettings.json`, and required `wwwroot` assets; runtime SQLite data is not included.
+
 ## Release 0.2.1 highlights
 
 - Dashboard access is loopback-only by default. Optional remote access requires Windows Authentication and HTTPS.
@@ -48,6 +54,8 @@
 ## Configuration
 
 Main configuration lives in `appsettings.json`.
+
+Administrators can inspect and edit supported non-secret settings from the dashboard's **System configuration** view. The editor validates and saves changes to the `appsettings.json` file beside `iisidsd.exe`; restart the service to apply them. Certificate passwords and unsupported sections are not shown or changed, and environment variables or command-line settings can override file values.
 
 ### `IisEtw`
 
@@ -148,7 +156,7 @@ The dashboard is served from the configured `Urls` value in `appsettings.json`. 
 
 Installing the Windows service through the tray configures automatic startup and service recovery restarts. Interactive launches open the dashboard once the listener is ready. During handoff, a tray companion waits for the interactive host to release the dashboard port before starting the service; the open browser tab remains at the same URL. At user logon, the tray companion opens the dashboard after the service health endpoint responds. The tray menu reports service state, dashboard health, deny-list dry-run status, dropped events, and the latest automatic deny-list action.
 
-When running as a Windows service, configuration and dashboard assets are loaded from the executable directory. Keep `appsettings.json` and the `wwwroot/` directory alongside `iisidsd.exe`.
+The `Urls` value in `appsettings.json` controls the dashboard listener. For single-file and Windows service runs, configuration and dashboard assets are loaded from the executable's directory, not the process working directory or single-file extraction directory. Keep `appsettings.json` and the `wwwroot/` directory alongside `iisidsd.exe`.
 
 ## Dashboard views
 
@@ -177,6 +185,10 @@ Shows discovered IIS sites and the deny list for the selected site.
 
 - Refreshing sites and reading deny lists is allowed by default.
 - Adding or removing deny-list entries requires `IisAdmin:EnableDenyListChanges=true`.
+
+### System configuration
+
+Provides an administrator-only JSON editor for ETW, detection, storage, IIS safety, dashboard access, tray, logging, listener, and OpenTelemetry settings. `GET /api/configuration` returns supported non-secret settings; `PATCH /api/configuration` accepts partial `{ "settings": { ... } }` updates. Saved configuration is validated; restart the service to apply it.
 
 ## API summary
 
@@ -222,7 +234,13 @@ Run tests with:
 
 - `dotnet test`
 
-Publish the framework-dependent Windows x64 release binaries with:
+Publish the self-contained standalone Windows x64 release with:
+
+- `dotnet publish iisidsd.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishProfile=StandaloneWinX64`
+
+The standalone package is written under `artifacts/iisidsd-0.2.2-standalone-win-x64` and includes only the executable, `appsettings.json`, and required dashboard assets. Runtime SQLite data is created beside the executable on first launch.
+
+Publish framework-dependent Windows x64 binaries with:
 
 - `dotnet publish iisidsd.csproj --configuration Release --runtime win-x64 --self-contained false`
 

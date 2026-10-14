@@ -1,5 +1,18 @@
 # Change Log
 
+## 0.2.2 - 2026-10-14
+
+### Added
+- An administrator-only dashboard editor for supported non-secret backend settings, with validation, secret redaction, partial updates, and restart-required status.
+
+### Changed
+- Single-file service and tray launches resolve configuration and dashboard assets beside the executable, independent of the working directory or .NET extraction directory.
+- The configured `Urls` value is applied to Kestrel, keeping the dashboard listener consistent with `appsettings.json`.
+- The standalone package contains only the executable, configuration, and required dashboard assets; runtime SQLite data is created separately.
+
+### Fixed
+- The dashboard and its static assets are available consistently when the application runs as a Windows service.
+
 ## 0.2.1 - 2026-10-14
 
 This release collects the changes made since 0.1.4.

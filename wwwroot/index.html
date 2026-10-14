@@ -38,6 +38,7 @@
     <button class="tab" type="button" data-view="findings">Findings</button>
     <button class="tab" type="button" data-view="details">IP details</button>
     <button class="tab" type="button" data-view="iis">IIS deny list</button>
+    <button class="tab" type="button" data-view="configuration">System configuration</button>
   </nav>
 
   <main>
@@ -191,6 +192,27 @@
           </thead>
           <tbody id="iis-deny-list"><tr><td colspan="9" class="empty">No IIS site data loaded.</td></tr></tbody>
         </table>
+      </div>
+    </section>
+
+    <section id="configuration-view" class="view panel" aria-label="System configuration">
+      <div class="panel-heading">
+        <div>
+          <h2>System configuration</h2>
+          <p>Edit supported backend settings stored in appsettings.json.</p>
+        </div>
+      </div>
+      <div class="summary configuration-guidance" id="configuration-guidance">
+        Changes are saved beside iisidsd.exe and require a service restart to take effect. Secret-bearing settings such as certificate passwords are not shown or modified. Environment variables and command-line settings may override this file.
+        <br><br>
+        These settings can affect listener exposure, event retention, ETW capture, and IIS deny-list actions. The existing administrator access policy protects this editor; an elevated service grants local loopback clients administrator API access.
+      </div>
+      <label class="configuration-label" for="configuration-editor">Editable appsettings.json sections</label>
+      <textarea id="configuration-editor" class="configuration-editor" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="configuration-guidance"></textarea>
+      <div class="actions configuration-actions">
+        <button class="button button-secondary" id="configuration-reload" type="button">Reload saved settings</button>
+        <button class="button button-danger" id="configuration-save" type="button">Save settings</button>
+        <span id="configuration-status" role="status" aria-live="polite">Select this tab to load the saved settings.</span>
       </div>
     </section>
   </main>

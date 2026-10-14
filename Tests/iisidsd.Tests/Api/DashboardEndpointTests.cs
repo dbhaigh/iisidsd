@@ -74,6 +74,7 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         });
         builder.Services.AddSingleton<IisObservability>();
         builder.Services.AddSingleton<SqliteHealthProbe>();
+        builder.Services.AddSingleton<IBackendConfigurationStore, FakeBackendConfigurationStore>();
         builder.Services.AddSingleton<IEventStore>(_eventStore);
         builder.Services.AddSingleton<IIpAggregationService>(_aggregationService);
         builder.Services.AddSingleton<IBanCountService>(_banCountService);
@@ -92,6 +93,7 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         _app.UseDashboardAccessPolicy(remoteAccessEnabled: true);
         _app.UseAuthorization();
         _app.MapDashboardEndpoints(new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        _app.MapBackendConfigurationEndpoints();
         await _app.StartAsync();
         _client = _app.GetTestClient();
         _client.BaseAddress = new Uri("https://localhost");
@@ -166,6 +168,7 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
     {
         var cases = new[]
         {
+            (HttpMethod.Get, "/api/configuration", (string?)null),
             (HttpMethod.Get, "/api/iis/status", (string?)null),
             (HttpMethod.Get, "/api/export/findings", (string?)null),
             (HttpMethod.Get, "/api/export/events?format=csv", (string?)null),
@@ -207,6 +210,21 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Forbidden, blockedBulkDeny.StatusCode);
         Assert.Equal(1, _denyListService.AddCalls);
         Assert.Equal(1, _denyListService.AddToDomainsCalls);
+    }
+
+    [Fact]
+    public async Task BackendConfigurationUpdate_RequiresAdministratorAndReportsRestartRequired()
+    {
+        const string body = """{"settings":{}}""";
+        using var anonymousResponse = await SendAsync(HttpMethod.Patch, "/api/configuration", body);
+        using var nonAdministratorResponse = await SendAsync(HttpMethod.Patch, "/api/configuration", body, "user");
+        using var administratorResponse = await SendAsync(HttpMethod.Patch, "/api/configuration", body, "administrator");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymousResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, nonAdministratorResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, administratorResponse.StatusCode);
+        using var result = JsonDocument.Parse(await administratorResponse.Content.ReadAsStringAsync());
+        Assert.True(result.RootElement.GetProperty("restartRequired").GetBoolean());
     }
 
     [Fact]
@@ -326,6 +344,22 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
 
             return channel.Reader;
         }
+    }
+
+    private sealed class FakeBackendConfigurationStore : IBackendConfigurationStore
+    {
+        private static readonly JsonElement Settings = JsonDocument
+            .Parse("""{"Urls":"http://127.0.0.1:5080"}""")
+            .RootElement
+            .Clone();
+
+        public Task<JsonElement> GetSettingsAsync(CancellationToken cancellationToken)
+            => Task.FromResult(Settings);
+
+        public Task<BackendConfigurationSaveResult> SaveSettingsAsync(
+            JsonElement settings,
+            CancellationToken cancellationToken)
+            => Task.FromResult(new BackendConfigurationSaveResult(true, new Dictionary<string, string[]>()));
     }
 
     private sealed class FakeAggregationService : IIpAggregationService

@@ -68,6 +68,10 @@ const iisStatus = document.querySelector('#iis-status');
 const iisConfigStatus = document.querySelector('#iis-config-status');
 const iisAuditBody = document.querySelector('#iis-audit-list');
 const iisDenyListBody = document.querySelector('#iis-deny-list');
+const configurationEditor = document.querySelector('#configuration-editor');
+const configurationReload = document.querySelector('#configuration-reload');
+const configurationSave = document.querySelector('#configuration-save');
+const configurationStatus = document.querySelector('#configuration-status');
 const bulkDenySelected = document.querySelector('#bulk-deny-selected');
 const bulkDenyStatus = document.querySelector('#bulk-deny-status');
 const selectVisible = document.querySelector('#select-visible');
@@ -99,6 +103,7 @@ let findingsRefreshHandle = 0;
 const maxEventsInMemory = 2000;
 const initialEventLimit = 1000;
 const dayInMilliseconds = 24 * 60 * 60 * 1000;
+let configurationLoaded = false;
 
 function text(value) {
   return document.createTextNode(value ?? '');
@@ -864,14 +869,71 @@ function render() {
   renderAccessStatus();
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url);
+async function fetchJson(url, options) {
+  const response = await fetch(url, options);
   if (!response.ok) {
-    const error = new Error(`Request failed: ${response.status}`);
+    const body = await response.text();
+    let detail = body.slice(0, 300);
+    if (body) {
+      try {
+        const problem = JSON.parse(body);
+        const validationErrors = Object.values(problem.errors || {}).flat().join(' ');
+        detail = validationErrors || problem.detail || problem.title || detail;
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+      }
+    }
+    const error = new Error(`Request failed: ${response.status}${detail ? ` - ${detail}` : ''}`);
     error.status = response.status;
     throw error;
   }
   return response.json();
+}
+
+async function loadBackendConfiguration() {
+  configurationStatus.textContent = 'Loading saved settings...';
+  configurationReload.disabled = true;
+  try {
+    const response = await fetchJson('/api/configuration');
+    configurationEditor.value = JSON.stringify(response.settings, null, 2);
+    configurationLoaded = true;
+    configurationStatus.textContent = 'Loaded the supported settings from appsettings.json.';
+  } catch (error) {
+    configurationStatus.textContent = error.status === 401 || error.status === 403
+      ? 'Backend configuration is available to authorized administrators only.'
+      : `Unable to load backend configuration: ${error.message}`;
+  } finally {
+    configurationReload.disabled = false;
+  }
+}
+
+async function saveBackendConfiguration() {
+  let settings;
+  try {
+    settings = JSON.parse(configurationEditor.value);
+  } catch (error) {
+    configurationStatus.textContent = `Invalid JSON: ${error.message}`;
+    return;
+  }
+
+  configurationSave.disabled = true;
+  configurationStatus.textContent = 'Validating and saving settings...';
+  try {
+    const response = await fetchJson('/api/configuration', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings })
+    });
+    configurationEditor.value = JSON.stringify(response.settings, null, 2);
+    configurationLoaded = true;
+    configurationStatus.textContent = 'Settings saved to appsettings.json. Restart the iisidsd service to apply them.';
+  } catch (error) {
+    configurationStatus.textContent = error.status === 401 || error.status === 403
+      ? 'Backend configuration changes are restricted to authorized administrators.'
+      : `Unable to save backend configuration: ${error.message}`;
+  } finally {
+    configurationSave.disabled = false;
+  }
 }
 
 function selectedDomainQuery() {
@@ -1324,7 +1386,12 @@ function queueRender() {
 
 function initializeViewTabs() {
   viewButtons.forEach(button => {
-    button.onclick = () => setView(button.dataset.view);
+    button.onclick = () => {
+      setView(button.dataset.view);
+      if (button.dataset.view === 'configuration' && !configurationLoaded) {
+        loadBackendConfiguration();
+      }
+    };
   });
 }
 
@@ -1421,6 +1488,8 @@ function setLivePaused(paused) {
 function initializeControls() {
   initializeViewTabs();
   initializeTableControls();
+  configurationReload.onclick = () => loadBackendConfiguration();
+  configurationSave.onclick = () => saveBackendConfiguration();
   setView('events');
   applyTheme(document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
 

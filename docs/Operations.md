@@ -11,6 +11,12 @@ Current persisted areas:
 
 The database schema is initialized at startup by `Storage/EventDbInitializer.cs`.
 
+## Backend configuration editor
+
+The administrator-only **System configuration** dashboard view edits supported non-secret settings in `appsettings.json` beside `iisidsd.exe`. `GET /api/configuration` reads the editor's supported settings, and `PATCH /api/configuration` accepts partial updates in a `{ "settings": { ... } }` object. It validates settings before writing and reports that a service restart is required before changes take effect. Unrecognized sections, including Kestrel certificate settings, are preserved but not exposed. Credentials embedded in URL settings are redacted and preserved when unchanged. Environment variables and command-line settings may override values in the file.
+
+The editor uses the existing `DashboardAdministrator` policy. In an elevated service, loopback clients inherit the existing local administrator-API access behavior; restrict local access to trusted processes.
+
 ## Findings workflow
 
 Suspicious request activity is processed in two layers:
@@ -153,6 +159,15 @@ Ban-count and IIS deny-list write APIs require an authenticated Windows Administ
 5. Verify the updated deny list in the IIS view.
 
 ## Troubleshooting
+
+### Service dashboard returns 404
+
+Check:
+
+- The service is running the current single-file build.
+- `appsettings.json` and the `wwwroot/` directory are beside the service executable.
+- The service log reports the web root under the executable directory, not the .NET single-file extraction directory.
+- The configured `Urls` value matches the address used by the browser.
 
 ### No live events
 
