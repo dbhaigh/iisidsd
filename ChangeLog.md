@@ -20,6 +20,12 @@ This release collects the changes made since 0.1.4.
 - README and risk-scoring documentation describe the release features, configuration, retention, and security model.
 - Expanded deterministic tests cover detector signals, persistence and concurrency, allow-list and temporary-ban safety, exports, and authorization.
 
+### Security
+- Updated `Microsoft.AspNetCore.Authentication.Negotiate` to 10.0.13 to address [GHSA-vrrp-6v32-2p8g](https://github.com/advisories/GHSA-vrrp-6v32-2p8g).
+
+### Fixed
+- Marked the tray context's `ExitThread` method as an intentional hide of `ApplicationContext.ExitThread`, removing the compiler warning.
+
 ## 0.1.4 - 2026-10-12
 
 ### Security

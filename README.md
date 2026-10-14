@@ -17,6 +17,7 @@
 ## Release 0.2.1 highlights
 
 - Dashboard access is loopback-only by default. Optional remote access requires Windows Authentication and HTTPS.
+- Windows Authentication uses the patched `Microsoft.AspNetCore.Authentication.Negotiate` 10.0.13 package ([GHSA-vrrp-6v32-2p8g](https://github.com/advisories/GHSA-vrrp-6v32-2p8g)).
 - Ban-count and IIS deny-list HTTP writes require an authenticated Windows Administrator; deny-list changes also require `IisAdmin:EnableDenyListChanges`.
 - Automatic IIS blocking requires a repeated-404 signal or a critical event with multiple distinct indicators.
 - Per-IP findings and per-domain summaries are updated incrementally in SQLite rather than re-aggregated from the event retention window for every request.

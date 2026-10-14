@@ -622,7 +622,7 @@ public sealed class TrayIconService(
             }
         }
 
-        public void ExitThread()
+        public new void ExitThread()
         {
             _serviceStateTimer.Stop();
             _icon.Visible = false;
