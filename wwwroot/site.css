@@ -205,6 +205,23 @@ p {
   color: var(--text);
 }
 
+.notice-dismiss {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-left: auto;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.notice-dismiss:hover {
+  background: var(--surface-hover);
+}
+
 .notice.warning {
   border-color: color-mix(in srgb, var(--warning) 48%, var(--border));
   background: color-mix(in srgb, var(--warning) 8%, var(--surface));

@@ -6,20 +6,19 @@ namespace iisidsd.Tests.Runtime;
 public sealed class DashboardAccessPolicyTests
 {
     [Theory]
-    [InlineData(false, true, false, false, DashboardAccessDecision.Allowed)]
-    [InlineData(false, false, false, false, DashboardAccessDecision.Forbidden)]
-    [InlineData(true, false, false, false, DashboardAccessDecision.Forbidden)]
-    [InlineData(true, false, true, false, DashboardAccessDecision.AuthenticationRequired)]
-    [InlineData(true, true, false, false, DashboardAccessDecision.AuthenticationRequired)]
-    [InlineData(true, true, false, true, DashboardAccessDecision.Allowed)]
+    [InlineData(false, true, false, DashboardAccessDecision.Allowed)]
+    [InlineData(false, false, false, DashboardAccessDecision.Forbidden)]
+    [InlineData(true, false, false, DashboardAccessDecision.Forbidden)]
+    [InlineData(true, false, true, DashboardAccessDecision.AuthenticationRequired)]
+    [InlineData(true, true, false, DashboardAccessDecision.Allowed)]
+    [InlineData(true, true, true, DashboardAccessDecision.Allowed)]
     public void Evaluate_ReturnsExpectedAccessDecision(
         bool remoteAccessEnabled,
         bool isLocalRequest,
         bool isHttps,
-        bool isLocalHealthCheck,
         DashboardAccessDecision expected)
     {
-        var decision = DashboardAccessPolicy.Evaluate(remoteAccessEnabled, isLocalRequest, isHttps, isLocalHealthCheck);
+        var decision = DashboardAccessPolicy.Evaluate(remoteAccessEnabled, isLocalRequest, isHttps);
 
         Assert.Equal(expected, decision);
     }
@@ -33,5 +32,24 @@ public sealed class DashboardAccessPolicyTests
         var principal = new ClaimsPrincipal(identity);
 
         Assert.False(DashboardAccessPolicy.IsWindowsAdministrator(principal));
+    }
+
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    public void CanAccessAdministratorFeatures_UsesElevatedHostOnlyForLocalRequests(
+        bool isLocalRequest,
+        bool hostIsAdministrator,
+        bool expected)
+    {
+        var principal = new ClaimsPrincipal(new ClaimsIdentity());
+
+        var canAccess = DashboardAccessPolicy.CanAccessAdministratorFeatures(
+            principal,
+            isLocalRequest,
+            hostIsAdministrator);
+
+        Assert.Equal(expected, canAccess);
     }
 }

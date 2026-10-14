@@ -13,10 +13,15 @@ This release collects the changes made since 0.1.4.
 - Administrator-only CSV and JSON exports for findings and retained events; CSV output protects against spreadsheet formula execution.
 - Startup validation for option groups and time-based event retention through `Storage:EventRetentionDays`, alongside the row-count limit.
 - Tray status for dry-run, dropped-event count, and the most recent automatic deny.
+- Regression coverage for local elevated-process access and live event streams that open before the first event arrives.
 
 ### Changed
 - SQLite stores now share per-database write synchronization; transient finding-prune lock errors are retried.
 - Findings responses are capped at 500 entries, and detector scores saturate instead of overflowing.
+- Loopback dashboard viewing no longer prompts for Windows Authentication. When the host process is elevated, loopback administrator APIs are also available without another prompt; remote access continues to require HTTPS and an authenticated Windows Administrator.
+- Service and tray launches use the executable directory for configuration and dashboard assets. Interactive startup opens the dashboard, and service handoff waits for the interactive host to release the port and verifies the UI assets before reporting readiness.
+- Warning and danger notices can be dismissed while remaining logged in the browser console.
+- The standalone x64 package contains only the executable, configuration, and required dashboard assets; runtime SQLite data is kept out of the package.
 - README and risk-scoring documentation describe the release features, configuration, retention, and security model.
 - Expanded deterministic tests cover detector signals, persistence and concurrency, allow-list and temporary-ban safety, exports, and authorization.
 
@@ -24,6 +29,7 @@ This release collects the changes made since 0.1.4.
 - Updated `Microsoft.AspNetCore.Authentication.Negotiate` to 10.0.13 to address [GHSA-vrrp-6v32-2p8g](https://github.com/advisories/GHSA-vrrp-6v32-2p8g).
 
 ### Fixed
+- The live event stream now flushes its SSE handshake immediately, so the dashboard connects even before ETW produces its first event.
 - Marked the tray context's `ExitThread` method as an intentional hide of `ApplicationContext.ExitThread`, removing the compiler warning.
 
 ## 0.1.4 - 2026-10-12

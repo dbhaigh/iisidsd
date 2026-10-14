@@ -1,4 +1,3 @@
-using System.Net;
 using Microsoft.AspNetCore.Authentication;
 using iisidsd.Runtime;
 using Microsoft.AspNetCore.Builder;
@@ -13,14 +12,11 @@ public static class DashboardAccessPolicyMiddlewareExtensions
         bool remoteAccessEnabled)
         => app.Use(async (context, next) =>
         {
-            var localRequest = IsLocalRequest(context);
-            var localHealthCheck = localRequest &&
-                string.Equals(context.Request.Path.Value, "/health", StringComparison.OrdinalIgnoreCase);
+            var localRequest = DashboardAccessPolicy.IsLocalRequest(context.Connection.RemoteIpAddress);
             var accessDecision = DashboardAccessPolicy.Evaluate(
                 remoteAccessEnabled,
                 localRequest,
-                context.Request.IsHttps,
-                localHealthCheck);
+                context.Request.IsHttps);
             if (accessDecision == DashboardAccessDecision.Forbidden)
             {
                 context.Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -36,17 +32,4 @@ public static class DashboardAccessPolicyMiddlewareExtensions
 
             await next();
         });
-
-    private static bool IsLocalRequest(HttpContext context)
-    {
-        var remoteAddress = context.Connection.RemoteIpAddress;
-        if (remoteAddress is null)
-        {
-            return false;
-        }
-
-        return remoteAddress.IsIPv4MappedToIPv6
-            ? IPAddress.IsLoopback(remoteAddress.MapToIPv4())
-            : IPAddress.IsLoopback(remoteAddress);
-    }
 }

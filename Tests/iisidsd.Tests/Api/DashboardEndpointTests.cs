@@ -148,6 +148,20 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task EventStream_OpensBeforeTheFirstEventArrives()
+    {
+        _eventStore.EmitOnSubscribe = false;
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/events/stream");
+        request.Headers.Add(TestAuthenticationHandler.RoleHeader, "user");
+
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("no-cache", response.Headers.CacheControl?.ToString());
+    }
+
+    [Fact]
     public async Task AdministratorEndpoints_RejectAnonymousAndNonAdministrators_AndSucceedForAdministrators()
     {
         var cases = new[]
@@ -273,6 +287,8 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
 
     private sealed class FakeEventStore : IEventStore
     {
+        public bool EmitOnSubscribe { get; set; } = true;
+
         private readonly SecurityEvent _event = new(
             DateTimeOffset.UtcNow,
             "server01",
@@ -302,8 +318,12 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         public ChannelReader<SecurityEvent> Subscribe(CancellationToken cancellationToken)
         {
             var channel = Channel.CreateUnbounded<SecurityEvent>();
-            channel.Writer.TryWrite(_event);
-            channel.Writer.TryComplete();
+            if (EmitOnSubscribe)
+            {
+                channel.Writer.TryWrite(_event);
+                channel.Writer.TryComplete();
+            }
+
             return channel.Reader;
         }
     }

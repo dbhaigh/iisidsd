@@ -28,6 +28,7 @@ const state = {
   detailRequestId: 0,
   renderFrame: 0,
   accessStatusSignature: '',
+  dismissedAccessWarnings: new Set(),
   sortState: {
     events: { key: 'timestamp', direction: 'desc' },
     findings: { key: 'timestamp', direction: 'desc' },
@@ -747,12 +748,38 @@ function renderIis() {
 }
 
 function createNotice(tone, title, message) {
+  const isWarning = tone === 'warning' || tone === 'danger';
+  const warningKey = `${tone}|${title}|${message}`;
+  if (isWarning) {
+    const logWarning = tone === 'danger' ? console.error : console.warn;
+    logWarning.call(console, `[iisidsd] ${title}: ${message}`);
+    if (state.dismissedAccessWarnings.has(warningKey)) return null;
+  }
+
   const notice = document.createElement('div');
   notice.className = `notice ${tone}`;
   const heading = document.createElement('strong');
   heading.append(text(`${title}: `));
   notice.append(heading, text(message));
+  if (isWarning) {
+    const dismissButton = document.createElement('button');
+    dismissButton.className = 'notice-dismiss';
+    dismissButton.type = 'button';
+    dismissButton.setAttribute('aria-label', `Dismiss ${title}`);
+    dismissButton.append(text('Dismiss'));
+    dismissButton.onclick = () => {
+      state.dismissedAccessWarnings.add(warningKey);
+      console.info(`[iisidsd] Dismissed dashboard notice: ${title}.`);
+      notice.remove();
+    };
+    notice.append(dismissButton);
+  }
   return notice;
+}
+
+function appendAccessNotice(tone, title, message) {
+  const notice = createNotice(tone, title, message);
+  if (notice) accessNotices.append(notice);
 }
 
 function renderAccessStatus() {
@@ -767,57 +794,59 @@ function renderAccessStatus() {
   if (signature === state.accessStatusSignature) return;
   state.accessStatusSignature = signature;
   accessNotices.replaceChildren();
-  accessNotices.append(localHost
-    ? createNotice(
+  if (localHost) {
+    appendAccessNotice(
       'warning',
       'Remote access',
       'The server setting is not exposed by the available API. Remote clients are blocked when Dashboard:RemoteAccessEnabled is false.'
-    )
-    : createNotice(
+    );
+  } else {
+    appendAccessNotice(
       'good',
       'Remote access',
       'This remote browser session reached the dashboard through the server access policy.'
-    ));
+    );
+  }
 
   if (state.iisStatusInfo) {
-    accessNotices.append(createNotice(
+    appendAccessNotice(
       'good',
       'Administrator access verified',
       'Administrator-only IIS settings are available for this session.'
-    ));
+    );
     if (state.iisStatusInfo.dryRun) {
-      accessNotices.append(createNotice(
+      appendAccessNotice(
         'warning',
         'Dry run is ON',
         'Deny-list actions are logged as intended actions and will not change IIS.'
-      ));
+      );
     }
 
     if (!state.iisStatusInfo.enableDenyListChanges) {
-      accessNotices.append(createNotice(
+      appendAccessNotice(
         'danger',
         'Deny-list changes are disabled',
         'IisAdmin:EnableDenyListChanges is the master switch; mutation controls are disabled.'
-      ));
+      );
     }
   } else if (state.iisStatusErrorStatus === 403) {
-    accessNotices.append(createNotice(
+    appendAccessNotice(
       'danger',
       'Administrator access unavailable',
       'This account is not authorized for administrator-only dashboard actions, or the server access policy rejected the request.'
-    ));
+    );
   } else if (state.iisStatusErrorStatus === 401) {
-    accessNotices.append(createNotice(
+    appendAccessNotice(
       'warning',
-      'Sign-in required',
-      'Windows Authentication is required to verify administrator access.'
-    ));
+      'Administrator sign-in required',
+      'Windows Authentication is only needed to verify administrator-only IIS features; viewing the dashboard does not require sign-in.'
+    );
   } else {
-    accessNotices.append(createNotice(
+    appendAccessNotice(
       'warning',
       'Administrator status unknown',
       'IIS safety settings and administrator-only actions are unavailable until status can be read.'
-    ));
+    );
   }
 }
 

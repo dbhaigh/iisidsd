@@ -117,7 +117,7 @@ Notes:
 
 ## Dashboard network access
 
-The dashboard binds to `http://127.0.0.1:5080` by default and rejects non-loopback clients. For remote access, explicitly set `Dashboard:RemoteAccessEnabled=true`, bind `Urls` to an HTTPS address, configure a Kestrel certificate, and allow the port only from intended clients through Windows Firewall. Remote clients must authenticate with Windows Authentication; remote HTTP requests are rejected.
+The dashboard binds to `http://127.0.0.1:5080` by default and rejects non-loopback clients. Loopback dashboard requests do not require Windows Authentication. If the host process is elevated, local loopback clients can use administrator-only APIs without per-user authentication; only run elevated on a trusted machine because all local processes can access those APIs. If the host is not elevated, local administrator operations require an authenticated Windows Administrator. For remote access, explicitly set `Dashboard:RemoteAccessEnabled=true`, bind `Urls` to an HTTPS address, configure a Kestrel certificate, and allow the port only from intended clients through Windows Firewall. Remote clients must authenticate with Windows Authentication; remote HTTP requests are rejected.
 
 Ban-count and IIS deny-list write APIs require an authenticated Windows Administrator, including for local requests. IIS deny-list changes additionally require `IisAdmin:EnableDenyListChanges=true`; this setting is disabled by default. Do not expose the listener through a reverse proxy unless remote access is enabled and the proxy preserves the required authentication and TLS protections.
 
@@ -158,10 +158,12 @@ Ban-count and IIS deny-list write APIs require an authenticated Windows Administ
 
 Check:
 
+- The dashboard reports `Live` once the SSE connection opens, even if no events have arrived yet. If it remains `Reconnecting`, verify that `GET /api/events/stream` returns `text/event-stream`.
 - `IisEtw:Enabled`
 - ETW provider configuration
 - Windows environment support
 - application logs for ETW startup failures
+- `/metrics` values `etw_events_received` and `events_processed` to distinguish provider capture from event persistence
 
 ### No IIS sites shown
 

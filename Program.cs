@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Net;
 using System.ServiceProcess;
@@ -25,7 +27,10 @@ if (!RuntimePrerequisiteChecker.EnsureRuntimeAvailable())
 }
 
 var filteredArgs = args
-    .Where(arg => !string.Equals(arg, "--tray-only", StringComparison.OrdinalIgnoreCase))
+    .Where(arg =>
+        !string.Equals(arg, "--tray-only", StringComparison.OrdinalIgnoreCase) &&
+        !string.Equals(arg, "--suppress-dashboard-open", StringComparison.OrdinalIgnoreCase) &&
+        !arg.StartsWith("--service-handoff-pid=", StringComparison.OrdinalIgnoreCase))
     .ToArray();
 var runWithTray = OperatingSystem.IsWindows() && Environment.UserInteractive;
 var trayOnlyMode = runWithTray &&
@@ -39,7 +44,11 @@ if (runWithTray)
 
 if (trayOnlyMode)
 {
-    var trayBuilder = Host.CreateApplicationBuilder(filteredArgs);
+    var trayBuilder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+    {
+        Args = filteredArgs,
+        ContentRootPath = AppContext.BaseDirectory
+    });
     trayBuilder.Services.AddIisIdsdOptions(trayBuilder.Configuration);
     trayBuilder.Services.AddHostedService<TrayIconService>();
 
@@ -48,7 +57,13 @@ if (trayOnlyMode)
     return;
 }
 
-var builder = WebApplication.CreateBuilder(filteredArgs);
+var isWindowsService = OperatingSystem.IsWindows() && !Environment.UserInteractive;
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = filteredArgs,
+    ContentRootPath = isWindowsService ? AppContext.BaseDirectory : null,
+    WebRootPath = isWindowsService ? Path.Combine(AppContext.BaseDirectory, "wwwroot") : null
+});
 builder.Host.UseWindowsService(options =>
 {
     options.ServiceName = "iisidsd";
@@ -79,11 +94,18 @@ builder.Services.AddOpenTelemetry()
     });
 
 builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme).AddNegotiate();
+var hostIsAdministrator = DashboardAccessPolicy.IsCurrentProcessAdministrator();
+var httpContextAccessor = new HttpContextAccessor();
+builder.Services.AddSingleton<IHttpContextAccessor>(httpContextAccessor);
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("DashboardAdministrator", policy =>
-        policy.RequireAuthenticatedUser()
-            .RequireAssertion(context => DashboardAccessPolicy.IsWindowsAdministrator(context.User)));
+        policy.RequireAssertion(context =>
+            DashboardAccessPolicy.CanAccessAdministratorFeatures(
+                context.User,
+                httpContextAccessor.HttpContext is { } httpContext &&
+                DashboardAccessPolicy.IsLocalRequest(httpContext.Connection.RemoteIpAddress),
+                hostIsAdministrator)));
 });
 builder.Services.AddSingleton<IFindingStore, SqliteFindingStore>();
 builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
@@ -113,6 +135,13 @@ if (runWithTray)
 builder.Services.AddRouting();
 
 var webApp = builder.Build();
+if (!webApp.Environment.WebRootFileProvider.GetFileInfo("index.html").Exists)
+{
+    webApp.Logger.LogError(
+        "Dashboard UI index.html was not found under web root {WebRootPath}.",
+        webApp.Environment.WebRootPath);
+}
+
 var remoteAccessEnabled = builder.Configuration.GetValue<bool>("Dashboard:RemoteAccessEnabled");
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 webApp.UseAuthentication();
@@ -125,7 +154,25 @@ webApp.MapDashboardEndpoints(jsonOptions);
 
 webApp.MapFallbackToFile("index.html");
 
+if (runWithTray)
+{
+    var browserUrl = webApp.Services.GetRequiredService<IOptions<TrayOptions>>().Value.BrowserUrl;
+    webApp.Lifetime.ApplicationStarted.Register(() => OpenDashboardBrowser(browserUrl, webApp.Logger));
+}
+
 webApp.Run();
+
+static void OpenDashboardBrowser(string browserUrl, ILogger logger)
+{
+    try
+    {
+        Process.Start(new ProcessStartInfo(browserUrl) { UseShellExecute = true });
+    }
+    catch (Exception exception)
+    {
+        logger.LogError(exception, "Unable to open the iisidsd dashboard at {Url}.", browserUrl);
+    }
+}
 
 static bool IsServiceRunning(string serviceName)
 {

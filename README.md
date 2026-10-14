@@ -126,7 +126,7 @@ The `Urls` setting controls the dashboard listener. The default listens only on 
 
 By default `Urls` is `http://127.0.0.1:5080` and non-loopback requests are rejected, even if the listener is rebound externally. To enable remote access, set `Dashboard:RemoteAccessEnabled` to `true`, bind `Urls` to an HTTPS address, and configure a Kestrel server certificate using the standard Kestrel certificate settings. Remote requests require Windows Authentication and HTTPS. Do not put certificate passwords in source-controlled configuration.
 
-When remote access is enabled, the dashboard requires Windows Authentication. Ban-count writes, IIS administration writes, IIS status/audit data, and both export endpoints additionally require the caller to be a member of the local Windows Administrators group. IIS deny-list changes also require `IisAdmin:EnableDenyListChanges=true`, which is disabled by default. Restrict inbound firewall rules to the intended clients.
+Loopback dashboard requests do not require Windows Authentication. When the host process is running as a Windows Administrator, loopback requests can also use administrator-only APIs without per-user authentication; this grants those permissions to all local processes that can connect to the dashboard. If the host is not elevated, administrator-only APIs require an authenticated Windows Administrator. Remote requests always require HTTPS and an authenticated Windows Administrator when remote access is enabled. IIS deny-list changes also require `IisAdmin:EnableDenyListChanges=true`, which is disabled by default. Restrict inbound firewall rules to the intended clients.
 
 The findings and events export endpoints return retained data and may contain client addresses, paths, host names, and user-agent values. They are administrator-only. CSV output quotes fields and prefixes spreadsheet formula-like values to prevent CSV formula execution.
 
@@ -146,7 +146,9 @@ Run:
 
 The dashboard is served from the configured `Urls` value in `appsettings.json`. Remote access must also be explicitly enabled and served over HTTPS.
 
-Installing the Windows service through the tray configures automatic startup and service recovery restarts. The tray menu reports service state, dashboard health, deny-list dry-run status, dropped events, and the latest automatic deny-list action.
+Installing the Windows service through the tray configures automatic startup and service recovery restarts. Interactive launches open the dashboard once the listener is ready. During handoff, a tray companion waits for the interactive host to release the dashboard port before starting the service; the open browser tab remains at the same URL. At user logon, the tray companion opens the dashboard after the service health endpoint responds. The tray menu reports service state, dashboard health, deny-list dry-run status, dropped events, and the latest automatic deny-list action.
+
+When running as a Windows service, configuration and dashboard assets are loaded from the executable directory. Keep `appsettings.json` and the `wwwroot/` directory alongside `iisidsd.exe`.
 
 ## Dashboard views
 

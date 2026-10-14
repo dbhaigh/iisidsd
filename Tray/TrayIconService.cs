@@ -95,12 +95,22 @@ public sealed class TrayIconService(
         private bool _healthCheckInProgress;
         private readonly bool _trayOnlyProcess = Environment.GetCommandLineArgs()
             .Any(arg => string.Equals(arg, "--tray-only", StringComparison.OrdinalIgnoreCase));
+        private bool _openDashboardWhenReady;
+        private readonly int? _serviceHandoffParentProcessId;
 
         public TrayApplicationContext(string browserUrl, IHostApplicationLifetime applicationLifetime, ILogger logger)
         {
             _browserUrl = browserUrl;
             _applicationLifetime = applicationLifetime;
             _logger = logger;
+            var arguments = Environment.GetCommandLineArgs();
+            var suppressDashboardOpen = arguments
+                .Any(arg => string.Equals(arg, "--suppress-dashboard-open", StringComparison.OrdinalIgnoreCase));
+            _serviceHandoffParentProcessId = GetServiceHandoffParentProcessId(arguments);
+            _openDashboardWhenReady = !suppressDashboardOpen &&
+                (_trayOnlyProcess ||
+                 (TryGetServiceStatus(out var serviceStatus) &&
+                  serviceStatus == ServiceControllerStatus.Running));
 
             var menu = new ContextMenuStrip();
             _serviceStatusItem = new ToolStripMenuItem("Service: Checking") { Enabled = false };
@@ -143,6 +153,10 @@ public sealed class TrayIconService(
             _serviceStateTimer.Tick += (_, _) => UpdateServiceMenuState();
             _serviceStateTimer.Start();
             UpdateServiceMenuState();
+            if (_serviceHandoffParentProcessId is int parentProcessId)
+            {
+                _ = StartServiceAfterHostExitAsync(parentProcessId);
+            }
         }
 
         private void UpdateServiceMenuState()
@@ -191,6 +205,12 @@ public sealed class TrayIconService(
                               (lastAutoDeny.GetProperty("dryRun").GetBoolean()
                                   ? $" (dry run, {lastAutoDeny.GetProperty("outcome").GetString()})"
                                   : $" ({lastAutoDeny.GetProperty("outcome").GetString()})");
+
+                        if (_openDashboardWhenReady)
+                        {
+                            _openDashboardWhenReady = false;
+                            OpenDashboard();
+                        }
                     }
                     else
                     {
@@ -269,20 +289,13 @@ public sealed class TrayIconService(
                 return;
             }
 
-            if (!await Task.Run(ScheduleDetachedStartRetries))
+            if (!await Task.Run(() => LaunchTrayCompanion(Environment.ProcessId)))
             {
-                ShowResult(operation, false, "Run as Administrator to manage Windows services.");
+                ShowResult(operation, false, "The tray companion could not be started.");
                 return;
             }
 
-            _ = await Task.Run(LaunchTrayCompanion);
-            BeginGracefulShutdownAfterServiceReady();
-
-            MessageBox.Show(
-                "iisidsd service startup is running in the background. This instance will close after the service dashboard is ready.",
-                "iisidsd service",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
+            _applicationLifetime.StopApplication();
         }
 
         private void StopService()
@@ -479,7 +492,7 @@ public sealed class TrayIconService(
             }
         }
 
-        private bool LaunchTrayCompanion()
+        private bool LaunchTrayCompanion(int parentProcessId)
         {
             var processPath = ResolveServiceProcessPath();
             if (string.IsNullOrWhiteSpace(processPath))
@@ -489,11 +502,16 @@ public sealed class TrayIconService(
 
             try
             {
-                using var process = Process.Start(new ProcessStartInfo(processPath, "--tray-only")
+                var startInfo = new ProcessStartInfo(processPath)
                 {
                     UseShellExecute = true,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                });
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                    WorkingDirectory = Path.GetDirectoryName(processPath) ?? AppContext.BaseDirectory
+                };
+                startInfo.ArgumentList.Add("--tray-only");
+                startInfo.ArgumentList.Add("--suppress-dashboard-open");
+                startInfo.ArgumentList.Add($"--service-handoff-pid={parentProcessId}");
+                using var process = Process.Start(startInfo);
                 return process is not null;
             }
             catch (Exception exception)
@@ -503,18 +521,68 @@ public sealed class TrayIconService(
             }
         }
 
-        private void BeginGracefulShutdownAfterServiceReady()
+        private async Task StartServiceAfterHostExitAsync(int parentProcessId)
         {
-            _ = Task.Run(async () =>
+            if (!await WaitForHostProcessExitAsync(parentProcessId, TimeSpan.FromSeconds(90)))
             {
-                var ready = await WaitForServiceDashboardReadyAsync(TimeSpan.FromSeconds(60));
-                if (!ready)
-                {
-                    _logger.LogWarning("Service/dashboard readiness check timed out. Closing interactive host to let service continue.");
-                }
+                _logger.LogError(
+                    "The interactive dashboard process {ProcessId} did not exit; the service handoff was cancelled.",
+                    parentProcessId);
+                return;
+            }
 
-                _applicationLifetime.StopApplication();
-            });
+            if (!await Task.Run(EnsureServiceStartRequested))
+            {
+                _logger.LogError("Unable to start the iisidsd service after the interactive dashboard closed.");
+                return;
+            }
+
+            if (!await WaitForServiceDashboardReadyAsync(TimeSpan.FromSeconds(60)))
+            {
+                _logger.LogError("The iisidsd service did not serve the complete dashboard after startup.");
+            }
+        }
+
+        private async Task<bool> WaitForHostProcessExitAsync(int processId, TimeSpan timeout)
+        {
+            using var timeoutSource = new CancellationTokenSource(timeout);
+            try
+            {
+                using var hostProcess = Process.GetProcessById(processId);
+                await hostProcess.WaitForExitAsync(timeoutSource.Token);
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                return true;
+            }
+            catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
+            {
+                return false;
+            }
+            catch (InvalidOperationException exception)
+            {
+                _logger.LogError(exception, "Unable to wait for dashboard process {ProcessId} to exit.", processId);
+                return false;
+            }
+            catch (System.ComponentModel.Win32Exception exception)
+            {
+                _logger.LogError(exception, "Unable to inspect dashboard process {ProcessId}.", processId);
+                return false;
+            }
+        }
+
+        private bool EnsureServiceStartRequested()
+        {
+            if (TryGetServiceStatus(out var status) &&
+                status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending)
+            {
+                return true;
+            }
+
+            return RunScCommand($"start {ServiceName}") ||
+                (TryGetServiceStatus(out status) &&
+                 status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending);
         }
 
         private async Task<bool> WaitForServiceDashboardReadyAsync(TimeSpan timeout)
@@ -529,11 +597,29 @@ public sealed class TrayIconService(
                     {
                         if (Uri.TryCreate(_browserUrl, UriKind.Absolute, out var baseUri))
                         {
-                            using var response = await _healthClient.GetAsync(new Uri(baseUri, "health"));
-                            if (response.IsSuccessStatusCode)
+                            using var healthResponse = await _healthClient.GetAsync(new Uri(baseUri, "health"));
+                            var dashboardUri = new Uri(baseUri.GetLeftPart(UriPartial.Authority) + "/");
+                            using var pageResponse = await _healthClient.GetAsync(dashboardUri);
+                            using var scriptResponse = await _healthClient.GetAsync(new Uri(baseUri, "app.js"));
+                            using var stylesResponse = await _healthClient.GetAsync(new Uri(baseUri, "site.css"));
+                            if (healthResponse.IsSuccessStatusCode &&
+                                pageResponse.IsSuccessStatusCode &&
+                                string.Equals(
+                                    pageResponse.Content.Headers.ContentType?.MediaType,
+                                    "text/html",
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                scriptResponse.IsSuccessStatusCode &&
+                                stylesResponse.IsSuccessStatusCode)
                             {
                                 return true;
                             }
+
+                            _logger.LogDebug(
+                                "Service dashboard readiness check returned HTTP {HealthStatus}, {PageStatus}, {ScriptStatus}, and {StylesStatus}.",
+                                (int)healthResponse.StatusCode,
+                                (int)pageResponse.StatusCode,
+                                (int)scriptResponse.StatusCode,
+                                (int)stylesResponse.StatusCode);
                         }
                     }
                     catch (HttpRequestException exception)
@@ -550,6 +636,18 @@ public sealed class TrayIconService(
             }
 
             return false;
+        }
+
+        private static int? GetServiceHandoffParentProcessId(string[] arguments)
+        {
+            const string prefix = "--service-handoff-pid=";
+            var argument = arguments.FirstOrDefault(value =>
+                value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+            return argument is not null &&
+                int.TryParse(argument[prefix.Length..], out var processId) &&
+                processId > 0
+                    ? processId
+                    : null;
         }
 
         private static string? ResolveServiceProcessPath()

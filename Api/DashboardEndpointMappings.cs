@@ -326,7 +326,9 @@ public static class DashboardEndpointMappings
         {
             context.Response.ContentType = "text/event-stream";
             context.Response.Headers.CacheControl = "no-cache";
-            context.Response.Headers.Connection = "keep-alive";
+            await context.Response.StartAsync(context.RequestAborted);
+            await context.Response.WriteAsync(": connected\n\n", context.RequestAborted);
+            await context.Response.Body.FlushAsync(context.RequestAborted);
 
             await foreach (var webEvent in store.Subscribe(context.RequestAborted).ReadAllAsync(context.RequestAborted))
             {
