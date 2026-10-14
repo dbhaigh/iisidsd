@@ -20,7 +20,8 @@ public sealed class BanCountServiceTests
         {
             var storageOptions = Options.Create(new StorageOptions { DatabasePath = "data/test.sqlite3" });
             var environment = new TestHostEnvironment(rootPath);
-            var initializer = new EventDbInitializer(storageOptions, environment, NullLogger<EventDbInitializer>.Instance);
+            var findingStore = new SqliteFindingStore(storageOptions, environment);
+            var initializer = new EventDbInitializer(storageOptions, environment, findingStore, NullLogger<EventDbInitializer>.Instance);
             await initializer.StartAsync(CancellationToken.None);
 
             var service = new BanCountService(storageOptions, environment);

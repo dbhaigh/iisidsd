@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Principal;
 using System.ServiceProcess;
+using System.Text.Json;
 using System.Windows.Forms;
 using iisidsd.Configuration;
 using Microsoft.Extensions.Options;
@@ -82,6 +83,9 @@ public sealed class TrayIconService(
         private readonly ToolStripMenuItem _installService;
         private readonly ToolStripMenuItem _serviceStatusItem;
         private readonly ToolStripMenuItem _dashboardStatusItem;
+        private readonly ToolStripMenuItem _dryRunStatusItem;
+        private readonly ToolStripMenuItem _droppedEventsStatusItem;
+        private readonly ToolStripMenuItem _lastAutoDenyStatusItem;
         private readonly ToolStripMenuItem _startService;
         private readonly ToolStripMenuItem _stopService;
         private readonly ToolStripMenuItem _restartService;
@@ -101,8 +105,14 @@ public sealed class TrayIconService(
             var menu = new ContextMenuStrip();
             _serviceStatusItem = new ToolStripMenuItem("Service: Checking") { Enabled = false };
             _dashboardStatusItem = new ToolStripMenuItem("Dashboard: Checking") { Enabled = false };
+            _dryRunStatusItem = new ToolStripMenuItem("DryRun: Checking") { Enabled = false };
+            _droppedEventsStatusItem = new ToolStripMenuItem("Dropped events: Checking") { Enabled = false };
+            _lastAutoDenyStatusItem = new ToolStripMenuItem("Last auto-deny: Checking") { Enabled = false };
             menu.Items.Add(_serviceStatusItem);
             menu.Items.Add(_dashboardStatusItem);
+            menu.Items.Add(_dryRunStatusItem);
+            menu.Items.Add(_droppedEventsStatusItem);
+            menu.Items.Add(_lastAutoDenyStatusItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Open dashboard", null, (_, _) => OpenDashboard());
             menu.Items.Add(new ToolStripSeparator());
@@ -165,21 +175,51 @@ public sealed class TrayIconService(
                     _dashboardStatusItem.Text = response.IsSuccessStatusCode
                         ? "Dashboard: Available"
                         : $"Dashboard: Unavailable (HTTP {(int)response.StatusCode})";
+                    if (response.IsSuccessStatusCode)
+                    {
+                        using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+                        var health = document.RootElement;
+                        _dryRunStatusItem.Text = health.GetProperty("dryRun").GetBoolean() ? "DryRun: ON" : "DryRun: OFF";
+                        _droppedEventsStatusItem.Text =
+                            $"Dropped events: {health.GetProperty("droppedEventCount").GetInt64():N0}";
+
+                        var lastAutoDeny = health.GetProperty("lastAutoDeny");
+                        _lastAutoDenyStatusItem.Text = lastAutoDeny.ValueKind == JsonValueKind.Null
+                            ? "Last auto-deny: none"
+                            : $"Last auto-deny: {lastAutoDeny.GetProperty("clientIp").GetString()} at " +
+                              $"{lastAutoDeny.GetProperty("occurredAt").GetDateTimeOffset():g}" +
+                              (lastAutoDeny.GetProperty("dryRun").GetBoolean()
+                                  ? $" (dry run, {lastAutoDeny.GetProperty("outcome").GetString()})"
+                                  : $" ({lastAutoDeny.GetProperty("outcome").GetString()})");
+                    }
+                    else
+                    {
+                        SetOperationsStatusUnavailable();
+                    }
                 }
                 else
                 {
                     _dashboardStatusItem.Text = "Dashboard: Unavailable (invalid URL)";
+                    SetOperationsStatusUnavailable();
                 }
             }
             catch (Exception exception)
             {
                 _dashboardStatusItem.Text = "Dashboard: Unavailable";
+                SetOperationsStatusUnavailable();
                 _logger.LogDebug(exception, "Unable to query dashboard health at {Url}.", _browserUrl);
             }
             finally
             {
                 _healthCheckInProgress = false;
             }
+        }
+
+        private void SetOperationsStatusUnavailable()
+        {
+            _dryRunStatusItem.Text = "DryRun: unavailable";
+            _droppedEventsStatusItem.Text = "Dropped events: unavailable";
+            _lastAutoDenyStatusItem.Text = "Last auto-deny: unavailable";
         }
 
         private static bool IsAdministrator()

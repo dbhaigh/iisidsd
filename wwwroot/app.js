@@ -5,11 +5,29 @@ const state = {
   findings: [],
   sites: [],
   deniedIps: [],
+  iisStatusInfo: null,
+  iisStatusError: '',
+  iisStatusErrorStatus: 0,
   selectedDomain: '*',
+  domainRequestId: 0,
+  findingsRequestId: 0,
+  iisStatusRequestId: 0,
+  sitesRequestId: 0,
+  deniedListRequestId: 0,
   selectedView: 'events',
   selectedFindingIp: null,
+  selectedFindingIps: new Set(),
   selectedSiteName: '',
   findingEvents: [],
+  searchQuery: '',
+  livePaused: false,
+  bulkDenyRunning: false,
+  eventSource: null,
+  reconnectTimer: 0,
+  reconnectAttempts: 0,
+  detailRequestId: 0,
+  renderFrame: 0,
+  accessStatusSignature: '',
   sortState: {
     events: { key: 'timestamp', direction: 'desc' },
     findings: { key: 'timestamp', direction: 'desc' },
@@ -26,6 +44,11 @@ const state = {
 
 const allEvents = document.querySelector('#all-events');
 const status = document.querySelector('#status');
+const streamHint = document.querySelector('#stream-hint');
+const pauseEvents = document.querySelector('#pause-events');
+const searchInput = document.querySelector('#search-input');
+const themeToggle = document.querySelector('#theme-toggle');
+const accessNotices = document.querySelector('#access-notices');
 const domains = document.querySelector('#domains');
 const viewButtons = [...document.querySelectorAll('.view-tabs button')];
 const eventBody = document.querySelector('#events');
@@ -41,12 +64,23 @@ const iisSiteSelect = document.querySelector('#iis-site-select');
 const iisRefresh = document.querySelector('#iis-refresh');
 const iisDenySelected = document.querySelector('#iis-deny-selected');
 const iisStatus = document.querySelector('#iis-status');
+const iisConfigStatus = document.querySelector('#iis-config-status');
+const iisAuditBody = document.querySelector('#iis-audit-list');
 const iisDenyListBody = document.querySelector('#iis-deny-list');
+const bulkDenySelected = document.querySelector('#bulk-deny-selected');
+const bulkDenyStatus = document.querySelector('#bulk-deny-status');
+const selectVisible = document.querySelector('#select-visible');
+const selectionCount = document.querySelector('#selection-count');
+const riskChart = document.querySelector('#risk-chart');
+const ipChart = document.querySelector('#ip-chart');
+const chartFootnote = document.querySelector('#chart-footnote');
+const findingRiskIndicators = document.querySelector('#finding-risk-indicators');
+const findingReasons = document.querySelector('#finding-reasons');
 const tableViews = {
   events: document.querySelector('#events-view table'),
   findings: document.querySelector('#findings-view table'),
   details: document.querySelector('#details-view table'),
-  iis: document.querySelector('#iis-view table')
+  iis: document.querySelector('#iis-deny-list')?.closest('table')
 };
 const tableColumns = [
   { key: 'timestamp', label: 'Time', type: 'date', defaultDirection: 'desc' },
@@ -61,9 +95,20 @@ const tableColumns = [
 ];
 const columnWidthLimits = { min: 80, max: 600 };
 let findingsRefreshHandle = 0;
+const maxEventsInMemory = 2000;
+const initialEventLimit = 1000;
+const dayInMilliseconds = 24 * 60 * 60 * 1000;
 
 function text(value) {
   return document.createTextNode(value ?? '');
+}
+
+function setConnectionStatus(message, stateName) {
+  status.dataset.state = stateName;
+  const dot = document.createElement('span');
+  dot.className = 'connection-dot';
+  dot.setAttribute('aria-hidden', 'true');
+  status.replaceChildren(dot, text(message));
 }
 
 function escapeSegment(value) {
@@ -71,7 +116,8 @@ function escapeSegment(value) {
 }
 
 function getSeverityClass(value) {
-  return String(value || 'Low').toLowerCase();
+  const severity = String(value || 'Low').toLowerCase();
+  return ['low', 'medium', 'high', 'critical'].includes(severity) ? severity : 'low';
 }
 
 function createRiskBadge(score, severity) {
@@ -314,6 +360,17 @@ function selectedFinding() {
   return state.findings.find(item => item.clientIp === state.selectedFindingIp) || null;
 }
 
+function matchesSearch(values) {
+  const query = state.searchQuery.trim().toLocaleLowerCase();
+  return !query || values.some(value => String(value ?? '').toLocaleLowerCase().includes(query));
+}
+
+function formatTimestamp(value) {
+  if (!value) return 'Unknown';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString();
+}
+
 function setView(view) {
   state.selectedView = view;
   viewButtons.forEach(button => button.classList.toggle('active', button.dataset.view === view));
@@ -321,11 +378,28 @@ function setView(view) {
 }
 
 function visibleEvent(webEvent) {
-  return (allEvents.checked || webEvent.isSuspicious) && (state.selectedDomain === '*' || webEvent.domain === state.selectedDomain);
+  return (allEvents.checked || webEvent.isSuspicious) &&
+    (state.selectedDomain === '*' || webEvent.domain === state.selectedDomain) &&
+    matchesSearch([
+      webEvent.clientIp,
+      webEvent.domain,
+      webEvent.path,
+      webEvent.method,
+      webEvent.detectionReason,
+      ...(webEvent.riskIndicators || [])
+    ]);
 }
 
 function visibleFinding(finding) {
-  return state.selectedDomain === '*' || (finding.domains || []).includes(state.selectedDomain);
+  return (state.selectedDomain === '*' || (finding.domains || []).includes(state.selectedDomain)) &&
+    matchesSearch([
+      finding.clientIp,
+      ...(finding.domains || []),
+      ...(finding.detectionReasons || []),
+      ...(finding.riskIndicators || []),
+      finding.highestRiskSeverity,
+      finding.highestRiskScore
+    ]);
 }
 
 function ensureDomainButtons() {
@@ -336,10 +410,13 @@ function ensureDomainButtons() {
   for (const domain of [...domainNames].sort((left, right) => left.localeCompare(right))) {
     if (!document.querySelector(`button[data-domain="${CSS.escape(domain)}"]`)) {
       const button = document.createElement('button');
+      button.className = 'domain-chip';
       button.dataset.domain = domain;
       button.append(text(domain));
-      button.onclick = async () => {
-        await selectDomain(domain);
+      button.onclick = () => {
+        selectDomain(domain).catch(error => {
+          streamHint.textContent = `Unable to change domain filter: ${error.message}`;
+        });
       };
       domains.append(button);
     }
@@ -359,7 +436,7 @@ function renderEvents() {
     if (webEvent.isSuspicious) row.className = 'suspicious';
 
     const findingBanCount = state.findings.find(item => item.clientIp === webEvent.clientIp)?.banCount ?? 0;
-    appendCells(row, [new Date(webEvent.timestamp).toLocaleString(), webEvent.clientIp, 1, webEvent.isSuspicious ? 'Yes' : 'No']);
+    appendCells(row, [formatTimestamp(webEvent.timestamp), webEvent.clientIp, 1, webEvent.isSuspicious ? 'Yes' : 'No']);
     appendCell(row, createRiskBadge(webEvent.riskScore, webEvent.riskSeverity));
     appendCells(row, [findingBanCount, webEvent.domain, webEvent.path, String(webEvent.detectionReason || '')]);
 
@@ -370,6 +447,13 @@ function renderEvents() {
 function renderFindings() {
   findingBody.replaceChildren();
   const visibleFindings = sortItems('findings', state.findings.filter(visibleFinding));
+  const allVisibleSelected = visibleFindings.length > 0 &&
+    visibleFindings.every(finding => state.selectedFindingIps.has(finding.clientIp));
+  selectVisible.textContent = allVisibleSelected ? 'Clear visible selection' : 'Select visible';
+  selectionCount.textContent = `${state.selectedFindingIps.size} selected`;
+  selectVisible.disabled = visibleFindings.length === 0 || state.bulkDenyRunning;
+  bulkDenySelected.disabled = state.selectedFindingIps.size === 0 ||
+    !state.iisStatusInfo?.enableDenyListChanges || state.bulkDenyRunning;
   if (!visibleFindings.length) {
     findingBody.append(createEmptyRow('No suspicious IP findings available.'));
     return;
@@ -380,12 +464,25 @@ function renderFindings() {
     row.className = `clickable ${state.selectedFindingIp === finding.clientIp ? 'selected' : ''}`.trim();
     row.onclick = () => openFinding(finding.clientIp);
 
-    appendCells(row, [
-      new Date(finding.lastSeen).toLocaleString(),
-      finding.clientIp,
-      finding.requestCount,
-      finding.suspiciousRequestCount
-    ]);
+    appendCell(row, formatTimestamp(finding.lastSeen));
+    const clientCell = appendCell(row, '');
+    const selector = document.createElement('input');
+    selector.type = 'checkbox';
+    selector.className = 'finding-select';
+    selector.checked = state.selectedFindingIps.has(finding.clientIp);
+    selector.disabled = state.bulkDenyRunning;
+    selector.setAttribute('aria-label', `Select ${finding.clientIp}`);
+    selector.onclick = event => event.stopPropagation();
+    selector.onchange = () => {
+      if (selector.checked) {
+        state.selectedFindingIps.add(finding.clientIp);
+      } else {
+        state.selectedFindingIps.delete(finding.clientIp);
+      }
+      renderFindings();
+    };
+    clientCell.append(selector, text(finding.clientIp));
+    appendCells(row, [finding.requestCount, finding.suspiciousRequestCount]);
     appendCell(row, createRiskBadge(finding.highestRiskScore, finding.highestRiskSeverity));
     appendCells(row, [finding.banCount ?? 0, (finding.domains || []).join(', '), '', (finding.detectionReasons || []).join('; ')]);
 
@@ -393,8 +490,106 @@ function renderFindings() {
   }
 }
 
+function appendChartRows(container, entries) {
+  container.replaceChildren();
+  if (!entries.length) {
+    const empty = document.createElement('span');
+    empty.className = 'muted';
+    empty.append(text('No matching events in the loaded 24-hour sample.'));
+    container.append(empty);
+    return;
+  }
+
+  const maxValue = Math.max(...entries.map(entry => entry.value), 1);
+  for (const entry of entries) {
+    const row = document.createElement('div');
+    row.className = 'chart-row';
+    const label = document.createElement('span');
+    label.className = 'chart-label';
+    label.title = entry.label;
+    label.append(text(entry.label));
+    const track = document.createElement('span');
+    track.className = 'bar-track';
+    const bar = document.createElement('span');
+    bar.className = `bar-fill ${getSeverityClass(entry.severity || 'low')}`;
+    bar.style.setProperty('--bar-width', `${Math.max(2, (entry.value / maxValue) * 100)}%`);
+    track.append(bar);
+    const value = document.createElement('span');
+    value.className = 'chart-value';
+    value.append(text(entry.value));
+    row.append(label, track, value);
+    container.append(row);
+  }
+}
+
+function renderCharts() {
+  const cutoff = Date.now() - dayInMilliseconds;
+  const events = state.events.filter(webEvent =>
+    Date.parse(webEvent.timestamp) >= cutoff &&
+    (state.selectedDomain === '*' || webEvent.domain === state.selectedDomain));
+  const riskCounts = new Map([['Low (0)', 0], ['Medium (1–3)', 0], ['High (4–7)', 0], ['Critical (8+)', 0]]);
+  const ipCounts = new Map();
+
+  for (const webEvent of events) {
+    const score = Number(webEvent.riskScore) || 0;
+    const bucket = score >= 8 ? 'Critical (8+)'
+      : score >= 4 ? 'High (4–7)'
+        : score >= 1 ? 'Medium (1–3)'
+          : 'Low (0)';
+    riskCounts.set(bucket, riskCounts.get(bucket) + 1);
+    if (webEvent.clientIp) {
+      ipCounts.set(webEvent.clientIp, (ipCounts.get(webEvent.clientIp) || 0) + 1);
+    }
+  }
+
+  appendChartRows(riskChart, [...riskCounts].map(([label, value]) => ({
+    label,
+    value,
+    severity: label.startsWith('Critical') ? 'Critical'
+      : label.startsWith('High') ? 'High'
+        : label.startsWith('Medium') ? 'Medium'
+          : 'Low'
+  })));
+  appendChartRows(ipChart, [...ipCounts]
+    .map(([label, value]) => ({ label, value }))
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
+    .slice(0, 6));
+  chartFootnote.textContent = `${events.length} matching events from the last 24 hours in a rolling sample of ${state.events.length} recent events.`;
+}
+
+function renderFindingIndicators(finding) {
+  const indicators = new Set(finding.riskIndicators || []);
+  for (const webEvent of state.findingEvents) {
+    for (const indicator of webEvent.riskIndicators || []) indicators.add(indicator);
+  }
+
+  for (const [container, values] of [
+    [findingRiskIndicators, [...indicators]],
+    [findingReasons, finding.detectionReasons || []]
+  ]) {
+    container.replaceChildren();
+    if (!values.length) {
+      const empty = document.createElement('span');
+      empty.className = 'muted';
+      empty.append(text('No indicators recorded.'));
+      container.append(empty);
+      continue;
+    }
+
+    for (const value of values) {
+      const chip = document.createElement('span');
+      chip.className = 'indicator-chip';
+      chip.append(text(value));
+      container.append(chip);
+    }
+  }
+}
+
 function updateTargetedDenyControls(finding) {
-  denyTargetSites.disabled = !finding;
+  const canChangeDenyList = Boolean(state.iisStatusInfo?.enableDenyListChanges);
+  denyTargetSites.disabled = !finding || !canChangeDenyList;
+  iisDenySelected.disabled = !state.selectedFindingIp || !state.selectedSiteName || !canChangeDenyList;
+  banCountSave.disabled = !state.iisStatusInfo;
   if (!finding) {
     denyTargetStatus.textContent = '';
   }
@@ -408,16 +603,32 @@ function renderDetails() {
   if (!finding) {
     detailSummary.textContent = 'Select a finding to inspect its recent events.';
     detailBody.append(createEmptyRow('No finding selected.'));
+    findingRiskIndicators.replaceChildren(text('No finding selected.'));
+    findingReasons.replaceChildren(text('No finding selected.'));
     return;
   }
 
   detailSummary.replaceChildren();
   const strong = document.createElement('strong');
   strong.append(text(finding.clientIp));
-  detailSummary.append(strong, text(` · ${finding.requestCount} requests · ${finding.suspiciousRequestCount} suspicious · Ban count ${finding.banCount ?? 0} · Highest risk ${finding.highestRiskScore} (${finding.highestRiskSeverity})`));
-  banCountValue.value = String(finding.banCount ?? 0);
+  detailSummary.append(
+    strong,
+    text(` · ${finding.requestCount} requests · ${finding.suspiciousRequestCount} suspicious · Ban count ${finding.banCount ?? 0} · Highest risk ${finding.highestRiskScore} (${finding.highestRiskSeverity}) · First seen ${formatTimestamp(finding.firstSeen)} · Last seen ${formatTimestamp(finding.lastSeen)}`)
+  );
+  renderFindingIndicators(finding);
+  if (document.activeElement !== banCountValue) {
+    banCountValue.value = String(finding.banCount ?? 0);
+  }
 
-  const visibleEvents = sortItems('details', state.findingEvents);
+  const visibleEvents = sortItems('details', state.findingEvents.filter(webEvent =>
+    matchesSearch([
+      webEvent.clientIp,
+      webEvent.domain,
+      webEvent.path,
+      webEvent.method,
+      webEvent.detectionReason,
+      ...(webEvent.riskIndicators || [])
+    ])));
   if (!visibleEvents.length) {
     detailBody.append(createEmptyRow('No recent events available for this IP.'));
     return;
@@ -427,7 +638,7 @@ function renderDetails() {
     const row = document.createElement('tr');
     if (webEvent.isSuspicious) row.className = 'suspicious';
 
-    appendCells(row, [new Date(webEvent.timestamp).toLocaleString(), webEvent.clientIp, 1, webEvent.isSuspicious ? 'Yes' : 'No']);
+    appendCells(row, [formatTimestamp(webEvent.timestamp), webEvent.clientIp, 1, webEvent.isSuspicious ? 'Yes' : 'No']);
     appendCell(row, createRiskBadge(webEvent.riskScore, webEvent.riskSeverity));
     appendCells(row, [finding.banCount ?? 0, webEvent.domain, webEvent.path, String(webEvent.detectionReason || '')]);
 
@@ -436,6 +647,9 @@ function renderDetails() {
 }
 
 function renderIis() {
+  renderIisConfiguration();
+  renderIisAudit();
+
   iisSiteSelect.replaceChildren();
   if (!state.sites.length) {
     const option = document.createElement('option');
@@ -451,6 +665,52 @@ function renderIis() {
       option.selected = site.name === state.selectedSiteName;
       option.append(text(site.name));
       iisSiteSelect.append(option);
+    }
+  }
+
+  function renderIisConfiguration() {
+    if (!state.iisStatusInfo) {
+      iisConfigStatus.textContent = state.iisStatusError || 'IIS safety settings are unavailable.';
+      return;
+    }
+
+    const settings = state.iisStatusInfo;
+    const temporaryBan = settings.temporaryBanMinutes > 0
+      ? `${settings.temporaryBanMinutes} minute(s)`
+      : 'permanent';
+    iisConfigStatus.textContent =
+      `Deny-list changes: ${settings.enableDenyListChanges ? 'enabled' : 'disabled'} · ` +
+      `Dry run: ${settings.dryRun ? 'ON' : 'OFF'} · ` +
+      `Ban duration: ${temporaryBan} · ` +
+      `Multiple indicators: ${settings.requireMultipleIndicators ? 'required' : 'not required'}`;
+  }
+
+  function renderIisAudit() {
+    iisAuditBody.replaceChildren();
+    const entries = state.iisStatusInfo?.recentAuditEntries || [];
+    if (!entries.length) {
+      iisAuditBody.append(createEmptyRow(
+        state.iisStatusInfo ? 'No deny-list audit entries.' : 'Audit history is unavailable.',
+        8
+      ));
+      return;
+    }
+
+    for (const entry of entries) {
+      const row = document.createElement('tr');
+      const occurredAt = entry.occurredAt ? new Date(entry.occurredAt).toLocaleString() : '';
+      const expiresAt = entry.expiresAt ? new Date(entry.expiresAt).toLocaleString() : '';
+      appendCells(row, [
+        occurredAt,
+        entry.actor,
+        entry.action,
+        entry.clientIp,
+        entry.siteName,
+        expiresAt,
+        entry.reason,
+        entry.dryRun ? `Dry run (${entry.outcome})` : entry.outcome
+      ]);
+      iisAuditBody.append(row);
     }
   }
 
@@ -474,14 +734,90 @@ function renderIis() {
     const removeButton = document.createElement('button');
     removeButton.className = 'inline-button';
     removeButton.type = 'button';
+    removeButton.disabled = !state.iisStatusInfo?.enableDenyListChanges;
     removeButton.append(text('Remove'));
     removeButton.onclick = () => {
-      removeDeniedIp(clientIp).catch(() => {
-        iisStatus.textContent = 'Removal failed.';
+      removeDeniedIp(clientIp).catch(error => {
+        iisStatus.textContent = `Removal failed: ${error.message}`;
       });
     };
     detectionCell.append(text(' '), removeButton);
     iisDenyListBody.append(row);
+  }
+}
+
+function createNotice(tone, title, message) {
+  const notice = document.createElement('div');
+  notice.className = `notice ${tone}`;
+  const heading = document.createElement('strong');
+  heading.append(text(`${title}: `));
+  notice.append(heading, text(message));
+  return notice;
+}
+
+function renderAccessStatus() {
+  const host = location.hostname.toLowerCase();
+  const localHost = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(host);
+  const signature = [
+    host,
+    state.iisStatusInfo
+      ? `${state.iisStatusInfo.enableDenyListChanges}:${state.iisStatusInfo.dryRun}`
+      : `error:${state.iisStatusErrorStatus}`
+  ].join('|');
+  if (signature === state.accessStatusSignature) return;
+  state.accessStatusSignature = signature;
+  accessNotices.replaceChildren();
+  accessNotices.append(localHost
+    ? createNotice(
+      'warning',
+      'Remote access',
+      'The server setting is not exposed by the available API. Remote clients are blocked when Dashboard:RemoteAccessEnabled is false.'
+    )
+    : createNotice(
+      'good',
+      'Remote access',
+      'This remote browser session reached the dashboard through the server access policy.'
+    ));
+
+  if (state.iisStatusInfo) {
+    accessNotices.append(createNotice(
+      'good',
+      'Administrator access verified',
+      'Administrator-only IIS settings are available for this session.'
+    ));
+    if (state.iisStatusInfo.dryRun) {
+      accessNotices.append(createNotice(
+        'warning',
+        'Dry run is ON',
+        'Deny-list actions are logged as intended actions and will not change IIS.'
+      ));
+    }
+
+    if (!state.iisStatusInfo.enableDenyListChanges) {
+      accessNotices.append(createNotice(
+        'danger',
+        'Deny-list changes are disabled',
+        'IisAdmin:EnableDenyListChanges is the master switch; mutation controls are disabled.'
+      ));
+    }
+  } else if (state.iisStatusErrorStatus === 403) {
+    accessNotices.append(createNotice(
+      'danger',
+      'Administrator access unavailable',
+      'This account is not authorized for administrator-only dashboard actions, or the server access policy rejected the request.'
+    ));
+  } else if (state.iisStatusErrorStatus === 401) {
+    accessNotices.append(createNotice(
+      'warning',
+      'Sign-in required',
+      'Windows Authentication is required to verify administrator access.'
+    ));
+  } else {
+    accessNotices.append(createNotice(
+      'warning',
+      'Administrator status unknown',
+      'IIS safety settings and administrator-only actions are unavailable until status can be read.'
+    ));
   }
 }
 
@@ -495,12 +831,16 @@ function render() {
   renderFindings();
   renderDetails();
   renderIis();
+  renderCharts();
+  renderAccessStatus();
 }
 
 async function fetchJson(url) {
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    const error = new Error(`Request failed: ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
@@ -533,6 +873,8 @@ async function saveBanCount() {
     return;
   }
 
+  const clientIp = state.selectedFindingIp;
+  const domain = state.selectedDomain;
   const banCount = Number.parseInt(banCountValue.value, 10);
   if (!Number.isInteger(banCount) || banCount < 0) {
     banCountStatus.textContent = 'Enter a non-negative whole number.';
@@ -540,8 +882,8 @@ async function saveBanCount() {
   }
 
   banCountStatus.textContent = 'Saving...';
-  const domainQuery = state.selectedDomain === '*' ? '' : `?domain=${escapeSegment(state.selectedDomain)}`;
-  const response = await fetch(`/api/ban-counts/${escapeSegment(state.selectedFindingIp)}${domainQuery}`, {
+  const domainQuery = domain === '*' ? '' : `?domain=${escapeSegment(domain)}`;
+  const response = await fetch(`/api/ban-counts/${escapeSegment(clientIp)}${domainQuery}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ banCount })
@@ -557,12 +899,16 @@ async function saveBanCount() {
   }
 
   const updated = await response.json();
-  const finding = state.findings.find(item => item.clientIp === state.selectedFindingIp);
+  const finding = state.findings.find(item => item.clientIp === clientIp);
   if (finding) {
     finding.banCount = updated.banCount;
   }
-  banCountValue.value = String(updated.banCount ?? 0);
-  banCountStatus.textContent = 'Saved.';
+  if (state.selectedFindingIp === clientIp) {
+    banCountValue.value = String(updated.banCount ?? 0);
+    banCountStatus.textContent = 'Saved.';
+  } else {
+    banCountStatus.textContent = `Saved the ban count for ${clientIp}.`;
+  }
   render();
 }
 
@@ -577,7 +923,7 @@ async function denyFindingOnMatchedSites() {
   const response = await fetch('/api/iis/deny-list', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientIp: finding.clientIp })
+    body: JSON.stringify({ clientIp: finding.clientIp, reason: 'Manual dashboard deny-list action' })
   });
 
   if (response.status === 401) {
@@ -586,7 +932,7 @@ async function denyFindingOnMatchedSites() {
   }
 
   if (response.status === 403) {
-    denyTargetStatus.textContent = 'Access denied. Check administrator access, HTTPS/remote-access settings, and IisAdmin:EnableDenyListChanges.';
+    denyTargetStatus.textContent = 'Access denied. Check administrator access, IisAdmin:EnableDenyListChanges, and whether the IP is allow-listed.';
     return;
   }
 
@@ -601,21 +947,35 @@ async function denyFindingOnMatchedSites() {
   }
 
   const updated = await response.json();
-  denyTargetStatus.textContent = `Added to ${updated.sites?.length ?? 0} site(s).`;
-  if (state.selectedSiteName) {
+  denyTargetStatus.textContent = updated.dryRun
+    ? `Dry run: would deny ${finding.clientIp} on sites matching ${updated.domains?.join(', ') || 'the finding domains'}.`
+    : `Added to ${updated.sites?.length ?? 0} site(s).`;
+  await refreshIisStatus();
+  if (!updated.dryRun && state.selectedSiteName) {
     await refreshDeniedIps();
   }
   render();
 }
 
 async function selectDomain(domain) {
+  const requestId = ++state.domainRequestId;
+  const detailRequestId = state.detailRequestId;
+  const selectedFindingIp = state.selectedFindingIp;
   state.selectedDomain = domain;
   denyTargetStatus.textContent = '';
+  bulkDenyStatus.textContent = '';
   document.querySelectorAll('#domains button').forEach(button => button.classList.toggle('active', button.dataset.domain === domain));
   await refreshFindings();
-  if (state.selectedFindingIp) {
-    const url = `/api/findings/${escapeSegment(state.selectedFindingIp)}/events?limit=250${selectedDomainQuery()}`;
-    state.findingEvents = await fetchJson(url);
+  if (requestId !== state.domainRequestId) return;
+  if (selectedFindingIp &&
+      state.selectedFindingIp === selectedFindingIp &&
+      state.detailRequestId === detailRequestId) {
+    const url = `/api/findings/${escapeSegment(selectedFindingIp)}/events?limit=250${selectedDomainQuery()}`;
+    const findingEvents = await fetchJson(url);
+    if (requestId !== state.domainRequestId ||
+        state.selectedFindingIp !== selectedFindingIp ||
+        state.detailRequestId !== detailRequestId) return;
+    state.findingEvents = findingEvents;
   }
   chooseSiteForSelectedFinding();
   if (state.selectedSiteName) {
@@ -625,33 +985,71 @@ async function selectDomain(domain) {
 }
 
 async function refreshFindings() {
+  const requestId = ++state.findingsRequestId;
   const url = `/api/findings?limit=250${state.selectedDomain === '*' ? '' : `&domain=${escapeSegment(state.selectedDomain)}`}`;
-  state.findings = await fetchJson(url);
+  const findings = await fetchJson(url);
+  if (requestId !== state.findingsRequestId) return;
+  state.findings = findings;
+  const availableIps = new Set(findings.map(item => item.clientIp));
+  state.selectedFindingIps = new Set([...state.selectedFindingIps].filter(ip => availableIps.has(ip)));
   if (state.selectedFindingIp && !state.findings.some(item => item.clientIp === state.selectedFindingIp)) {
     state.selectedFindingIp = null;
     state.findingEvents = [];
+    state.detailRequestId++;
   }
   render();
 }
 
 async function refreshSites() {
-  state.sites = await fetchJson('/api/iis/sites');
+  const requestId = ++state.sitesRequestId;
+  await refreshIisStatus();
+  const sites = await fetchJson('/api/iis/sites');
+  if (requestId !== state.sitesRequestId) return;
+  state.sites = sites;
   if (!state.selectedSiteName || !state.sites.some(site => site.name === state.selectedSiteName)) {
     if (!chooseSiteForSelectedFinding()) {
       state.selectedSiteName = state.sites[0]?.name || '';
     }
   }
   await refreshDeniedIps();
+  if (requestId !== state.sitesRequestId) return;
+  render();
+}
+
+async function refreshIisStatus() {
+  const requestId = ++state.iisStatusRequestId;
+  try {
+    const statusInfo = await fetchJson('/api/iis/status');
+    if (requestId !== state.iisStatusRequestId) return;
+    state.iisStatusInfo = statusInfo;
+    state.iisStatusError = '';
+    state.iisStatusErrorStatus = 0;
+  } catch (error) {
+    if (requestId !== state.iisStatusRequestId) return;
+    state.iisStatusInfo = null;
+    state.iisStatusErrorStatus = error?.status || 0;
+    state.iisStatusError = state.iisStatusErrorStatus === 401
+      ? 'Windows Authentication is required to view administrator-only IIS settings.'
+      : state.iisStatusErrorStatus === 403
+        ? 'Administrator access is required to view IIS settings and audit history.'
+        : 'Unable to read IIS settings and audit history.';
+  }
+
   render();
 }
 
 async function refreshDeniedIps() {
+  const requestId = ++state.deniedListRequestId;
   if (!state.selectedSiteName) {
     state.deniedIps = [];
     return;
   }
 
-  state.deniedIps = await fetchJson(`/api/iis/sites/${escapeSegment(state.selectedSiteName)}/deny-list`);
+  const siteName = state.selectedSiteName;
+  const deniedIps = await fetchJson(`/api/iis/sites/${escapeSegment(siteName)}/deny-list`);
+  if (requestId === state.deniedListRequestId && state.selectedSiteName === siteName) {
+    state.deniedIps = deniedIps;
+  }
 }
 
 async function denySelectedFindingIp() {
@@ -665,11 +1063,13 @@ async function denySelectedFindingIp() {
     return;
   }
 
+  const clientIp = state.selectedFindingIp;
+  const siteName = state.selectedSiteName;
   iisStatus.textContent = 'Applying deny-list entry...';
-  const response = await fetch(`/api/iis/sites/${escapeSegment(state.selectedSiteName)}/deny-list`, {
+  const response = await fetch(`/api/iis/sites/${escapeSegment(siteName)}/deny-list`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientIp: state.selectedFindingIp })
+    body: JSON.stringify({ clientIp, reason: 'Manual dashboard deny-list action' })
   });
 
   if (response.status === 401) {
@@ -678,7 +1078,7 @@ async function denySelectedFindingIp() {
   }
 
   if (response.status === 403) {
-    iisStatus.textContent = 'Access denied. Check administrator access, HTTPS/remote-access settings, and IisAdmin:EnableDenyListChanges.';
+    iisStatus.textContent = 'Access denied. Check administrator access, IisAdmin:EnableDenyListChanges, and whether the IP is allow-listed.';
     return;
   }
 
@@ -687,8 +1087,14 @@ async function denySelectedFindingIp() {
     return;
   }
 
-  await refreshDeniedIps();
-  iisStatus.textContent = 'Deny-list entry added.';
+  const updated = await response.json();
+  if (!updated.dryRun && state.selectedSiteName === siteName) {
+    await refreshDeniedIps();
+  }
+  iisStatus.textContent = updated.dryRun
+    ? `Dry run: would deny ${clientIp} on ${siteName}.`
+    : `Deny-list entry added for ${clientIp} on ${siteName}.`;
+  await refreshIisStatus();
   render();
 }
 
@@ -698,8 +1104,9 @@ async function removeDeniedIp(clientIp) {
     return;
   }
 
+  const siteName = state.selectedSiteName;
   iisStatus.textContent = 'Removing deny-list entry...';
-  const response = await fetch(`/api/iis/sites/${escapeSegment(state.selectedSiteName)}/deny-list/${escapeSegment(clientIp)}`, {
+  const response = await fetch(`/api/iis/sites/${escapeSegment(siteName)}/deny-list/${escapeSegment(clientIp)}?reason=${escapeSegment('Manual dashboard removal')}`, {
     method: 'DELETE'
   });
 
@@ -718,9 +1125,100 @@ async function removeDeniedIp(clientIp) {
     return;
   }
 
-  await refreshDeniedIps();
-  iisStatus.textContent = 'Deny-list entry removed.';
+  const updated = await response.json();
+  if (!updated.dryRun && state.selectedSiteName === siteName) {
+    await refreshDeniedIps();
+  }
+  iisStatus.textContent = updated.dryRun
+    ? `Dry run: would remove ${clientIp} from ${siteName}.`
+    : `Deny-list entry removed for ${clientIp} from ${siteName}.`;
+  await refreshIisStatus();
   render();
+}
+
+async function denySelectedFindings() {
+  const clientIps = [...state.selectedFindingIps];
+  if (!clientIps.length) {
+    bulkDenyStatus.textContent = 'Select one or more findings first.';
+    return;
+  }
+  if (!state.iisStatusInfo?.enableDenyListChanges) {
+    bulkDenyStatus.textContent = 'Deny-list changes are disabled or administrator access is unavailable.';
+    return;
+  }
+
+  const mode = state.iisStatusInfo.dryRun ? 'dry run' : 'apply';
+  if (!window.confirm(`${mode === 'dry run' ? 'Simulate' : 'Deny'} ${clientIps.length} selected IP address(es)?`)) {
+    return;
+  }
+
+  let applied = 0;
+  let simulated = 0;
+  const failed = [];
+  const failedIps = [];
+  bulkDenySelected.disabled = true;
+  state.bulkDenyRunning = true;
+  renderFindings();
+  bulkDenyStatus.textContent = 'Processing selected IPs sequentially...';
+
+  for (const clientIp of clientIps) {
+    try {
+      const response = await fetch('/api/iis/deny-list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientIp, reason: 'Bulk dashboard deny-list action' })
+      });
+      if (!response.ok) {
+        failed.push(`${clientIp} (HTTP ${response.status})`);
+        failedIps.push(clientIp);
+        continue;
+      }
+
+      const result = await response.json();
+      if (result.dryRun) {
+        simulated++;
+      } else {
+        applied++;
+      }
+    } catch (error) {
+      failed.push(`${clientIp} (${error.message})`);
+      failedIps.push(clientIp);
+    }
+  }
+
+  state.selectedFindingIps = new Set(failedIps);
+  state.bulkDenyRunning = false;
+  renderFindings();
+  const resultSummary = [
+    applied ? `${applied} applied` : '',
+    simulated ? `${simulated} simulated` : '',
+    failed.length ? `${failed.length} failed: ${failed.join(', ')}` : ''
+  ].filter(Boolean).join(' · ');
+  bulkDenyStatus.textContent = resultSummary || 'No deny-list actions were completed.';
+
+  try {
+    await refreshIisStatus();
+    await refreshFindings();
+  } catch (error) {
+    bulkDenyStatus.textContent += ` Refresh failed: ${error.message}`;
+  }
+}
+
+function selectVisibleFindings() {
+  const visibleFindings = state.findings.filter(visibleFinding);
+  const allVisibleSelected = visibleFindings.length > 0 &&
+    visibleFindings.every(finding => state.selectedFindingIps.has(finding.clientIp));
+
+  for (const finding of visibleFindings) {
+    if (allVisibleSelected) {
+      state.selectedFindingIps.delete(finding.clientIp);
+    } else {
+      state.selectedFindingIps.add(finding.clientIp);
+    }
+  }
+
+  selectVisible.textContent = allVisibleSelected ? 'Select visible' : 'Clear visible selection';
+  renderFindings();
 }
 
 function scheduleFindingsRefresh() {
@@ -733,30 +1231,66 @@ function scheduleFindingsRefresh() {
         await refreshDeniedIps();
         render();
       }
-    } catch {
+    } catch (error) {
+      streamHint.textContent = `Unable to refresh findings after a recent event: ${error.message}`;
     }
   }, 500);
 }
 
 async function openFinding(clientIp) {
+  const requestId = ++state.detailRequestId;
   state.selectedFindingIp = clientIp;
+  state.findingEvents = [];
   denyTargetStatus.textContent = '';
   setView('details');
-  const url = `/api/findings/${escapeSegment(clientIp)}/events?limit=250${selectedDomainQuery()}`;
-  state.findingEvents = await fetchJson(url);
+  render();
+
+  let findingEvents;
+  try {
+    const url = `/api/findings/${escapeSegment(clientIp)}/events?limit=250${selectedDomainQuery()}`;
+    findingEvents = await fetchJson(url);
+  } catch (error) {
+    if (requestId === state.detailRequestId) {
+      detailSummary.textContent = `Unable to load events for ${clientIp}: ${error.message}`;
+    }
+    return;
+  }
+
+  if (requestId !== state.detailRequestId) return;
+  state.findingEvents = findingEvents;
   chooseSiteForSelectedFinding();
   if (state.selectedSiteName) {
-    await refreshDeniedIps();
+    try {
+      await refreshDeniedIps();
+    } catch (error) {
+      iisStatus.textContent = `Unable to load deny-list entries: ${error.message}`;
+    }
   }
-  render();
+
+  if (requestId === state.detailRequestId) render();
 }
 
 function addEvent(webEvent) {
   if (!state.events.some(existing => existing.id === webEvent.id)) {
     state.events.push(webEvent);
+    if (state.events.length > maxEventsInMemory) {
+      state.events.splice(0, state.events.length - maxEventsInMemory);
+    }
     scheduleFindingsRefresh();
   }
-  render();
+  queueRender();
+}
+
+function queueRender() {
+  if (state.renderFrame) return;
+  state.renderFrame = window.requestAnimationFrame(() => {
+    state.renderFrame = 0;
+    ensureDomainButtons();
+    applyTableUi('events');
+    renderEvents();
+    renderCharts();
+    renderAccessStatus();
+  });
 }
 
 function initializeViewTabs() {
@@ -765,60 +1299,171 @@ function initializeViewTabs() {
   });
 }
 
-allEvents.onchange = render;
-banCountSave.onclick = () => {
-  saveBanCount().catch(() => {
-    banCountStatus.textContent = 'Save failed.';
-  });
-};
-denyTargetSites.onclick = () => {
-  denyFindingOnMatchedSites().catch(() => {
-    denyTargetStatus.textContent = 'Unable to add deny-list entry.';
-  });
-};
-iisSiteSelect.onchange = () => {
-  state.selectedSiteName = iisSiteSelect.value;
-  refreshDeniedIps().then(render).catch(() => {
-    iisStatus.textContent = 'Unable to load deny-list entries.';
-  });
-};
-iisRefresh.onclick = () => {
-  refreshSites().then(() => {
-    iisStatus.textContent = 'IIS site data refreshed.';
-  }).catch(() => {
-    iisStatus.textContent = 'Unable to load IIS site data.';
-  });
-};
-iisDenySelected.onclick = () => {
-  denySelectedFindingIp().catch(() => {
-    iisStatus.textContent = 'Unable to add deny-list entry.';
-  });
-};
-document.querySelector('[data-domain="*"]').onclick = async () => {
-  await selectDomain('*');
-};
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const dark = theme === 'dark';
+  themeToggle.textContent = dark ? 'Use light theme' : 'Use dark theme';
+  themeToggle.setAttribute('aria-pressed', String(dark));
+}
 
-initializeViewTabs();
-initializeTableControls();
-setView('events');
-fetchJson('/api/events?limit=1000')
-  .then(items => {
-    items.reverse().forEach(addEvent);
-    status.textContent = 'Connected';
-    return refreshFindings();
-  })
-  .then(() => refreshSites().catch(() => {
-    iisStatus.textContent = 'Unable to load IIS site data.';
-  }))
-  .catch(() => {
-    status.textContent = 'API unavailable';
+function mergeEvents(events) {
+  const byId = new Map(state.events.map(webEvent => [webEvent.id, webEvent]));
+  const previousCount = byId.size;
+  for (const webEvent of events) {
+    byId.set(webEvent.id, webEvent);
+  }
+
+  state.events = [...byId.values()]
+    .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
+    .slice(-maxEventsInMemory);
+  if (byId.size > previousCount) {
+    scheduleFindingsRefresh();
+  }
+  render();
+}
+
+async function refreshEvents() {
+  const events = await fetchJson(`/api/events?limit=${initialEventLimit}`);
+  mergeEvents(events);
+}
+
+function connectEventStream() {
+  if (state.livePaused || state.eventSource) return;
+  const source = new EventSource('/api/events/stream');
+  state.eventSource = source;
+
+  source.onopen = () => {
+    if (state.eventSource !== source || state.livePaused) return;
+    state.reconnectAttempts = 0;
+    setConnectionStatus('Live', 'live');
+    streamHint.textContent = 'Connected. Stream recovery loads recent events after reconnects.';
+    refreshEvents().catch(error => {
+      streamHint.textContent = `Live stream is connected, but event recovery failed: ${error.message}`;
+    });
+  };
+
+  source.addEventListener('etw', event => {
+    if (state.eventSource !== source || state.livePaused) return;
+    try {
+      addEvent(JSON.parse(event.data));
+    } catch (error) {
+      streamHint.textContent = `An event could not be read: ${error.message}`;
+    }
   });
 
-const stream = new EventSource('/api/events/stream');
-stream.addEventListener('etw', event => {
-  status.textContent = 'Live';
-  addEvent(JSON.parse(event.data));
-});
-stream.onerror = () => {
-  status.textContent = 'Reconnecting...';
-};
+  source.onerror = () => {
+    if (state.eventSource !== source || state.livePaused) return;
+    setConnectionStatus('Reconnecting', 'reconnecting');
+    streamHint.textContent = 'The browser will retry the event stream automatically.';
+    if (source.readyState === EventSource.CLOSED && !state.reconnectTimer) {
+      const delay = Math.min(30000, 1000 * (2 ** Math.min(state.reconnectAttempts, 5)));
+      state.reconnectAttempts++;
+      state.reconnectTimer = window.setTimeout(() => {
+        state.reconnectTimer = 0;
+        state.eventSource = null;
+        connectEventStream();
+      }, delay);
+    }
+  };
+}
+
+function setLivePaused(paused) {
+  state.livePaused = paused;
+  pauseEvents.textContent = paused ? 'Resume live updates' : 'Pause live updates';
+  pauseEvents.setAttribute('aria-pressed', String(paused));
+
+  if (paused) {
+    if (state.reconnectTimer) {
+      window.clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = 0;
+    }
+    state.eventSource?.close();
+    state.eventSource = null;
+    setConnectionStatus('Paused', 'paused');
+    streamHint.textContent = 'Live updates are paused. Resume to load recent events and reconnect.';
+    return;
+  }
+
+  setConnectionStatus('Catching up', 'reconnecting');
+  streamHint.textContent = 'Reconnecting; recent events will be loaded when the stream opens.';
+  connectEventStream();
+}
+
+function initializeControls() {
+  initializeViewTabs();
+  initializeTableControls();
+  setView('events');
+  applyTheme(document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+
+  themeToggle.onclick = () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+  searchInput.oninput = () => {
+    state.searchQuery = searchInput.value;
+    render();
+  };
+  allEvents.onchange = render;
+  pauseEvents.onclick = () => setLivePaused(!state.livePaused);
+  selectVisible.onclick = selectVisibleFindings;
+  bulkDenySelected.onclick = () => {
+    denySelectedFindings().catch(error => {
+      bulkDenyStatus.textContent = `Bulk deny failed: ${error.message}`;
+    });
+  };
+  banCountSave.onclick = () => {
+    saveBanCount().catch(error => {
+      banCountStatus.textContent = `Save failed: ${error.message}`;
+    });
+  };
+  denyTargetSites.onclick = () => {
+    denyFindingOnMatchedSites().catch(error => {
+      denyTargetStatus.textContent = `Unable to add deny-list entry: ${error.message}`;
+    });
+  };
+  iisSiteSelect.onchange = () => {
+    state.sitesRequestId++;
+    state.selectedSiteName = iisSiteSelect.value;
+    state.deniedIps = [];
+    refreshDeniedIps().then(render).catch(error => {
+      iisStatus.textContent = `Unable to load deny-list entries: ${error.message}`;
+    });
+  };
+  iisRefresh.onclick = () => {
+    refreshSites().then(() => {
+      iisStatus.textContent = 'IIS site data refreshed.';
+    }).catch(error => {
+      iisStatus.textContent = `Unable to load IIS site data: ${error.message}`;
+    });
+  };
+  iisDenySelected.onclick = () => {
+    denySelectedFindingIp().catch(error => {
+      iisStatus.textContent = `Unable to add deny-list entry: ${error.message}`;
+    });
+  };
+  document.querySelector('[data-domain="*"]').onclick = () => {
+    selectDomain('*').catch(error => {
+      streamHint.textContent = `Unable to change domain filter: ${error.message}`;
+    });
+  };
+}
+
+async function initializeDashboard() {
+  initializeControls();
+  render();
+
+  try {
+    await refreshEvents();
+    await refreshFindings();
+  } catch (error) {
+    setConnectionStatus('API unavailable', 'error');
+    streamHint.textContent = `Unable to load dashboard data: ${error.message}`;
+  }
+
+  try {
+    await refreshSites();
+  } catch (error) {
+    iisStatus.textContent = `Unable to load IIS site data: ${error.message}`;
+  }
+
+  connectEventStream();
+}
+
+initializeDashboard();

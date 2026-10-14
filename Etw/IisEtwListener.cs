@@ -4,6 +4,7 @@ using iisidsd.Configuration;
 using iisidsd.Detection;
 using iisidsd.Iis;
 using iisidsd.Models;
+using iisidsd.Observability;
 using iisidsd.Storage;
 using Microsoft.Diagnostics.Tracing;
 using Microsoft.Diagnostics.Tracing.Session;
@@ -15,6 +16,7 @@ public sealed class IisEtwListener(
     IEventStore eventStore,
     ISuspiciousActivityDetector detector,
     IIisAutoDenyService autoDenyService,
+    IisObservability observability,
     IOptions<IisEtwOptions> options,
     ILogger<IisEtwListener> logger) : BackgroundService
 {
@@ -34,7 +36,6 @@ public sealed class IisEtwListener(
             SingleReader = true,
             SingleWriter = false
         });
-    private long _droppedEventCount;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -78,6 +79,7 @@ public sealed class IisEtwListener(
 
     private void OnEvent(TraceEvent traceEvent)
     {
+        observability.RecordEtwEventReceived();
         var properties = traceEvent.PayloadNames
             .ToDictionary(name => name, name => Convert.ToString(traceEvent.PayloadByName(name), CultureInfo.InvariantCulture) ?? string.Empty, StringComparer.OrdinalIgnoreCase);
 
@@ -92,9 +94,12 @@ public sealed class IisEtwListener(
             Get(properties, UserAgentPropertyNames) ?? "",
             properties);
 
+        observability.RecordQueueItemEnqueued();
         if (!_ingestionQueue.Writer.TryWrite(webEvent))
         {
-            var droppedCount = Interlocked.Increment(ref _droppedEventCount);
+            observability.RecordQueueItemDequeued();
+            observability.RecordEtwEventDropped();
+            var droppedCount = observability.EtwEventsDropped;
             if (droppedCount == 1 || droppedCount % 100 == 0)
             {
                 logger.LogWarning("ETW ingestion queue is full; {DroppedEventCount} event(s) have been dropped.", droppedCount);
@@ -106,20 +111,38 @@ public sealed class IisEtwListener(
     {
         await foreach (var webEvent in _ingestionQueue.Reader.ReadAllAsync())
         {
+            observability.RecordQueueItemDequeued();
+            SecurityEvent? analyzedEvent = null;
             try
             {
-                var suspiciousEvent = detector.Analyze(webEvent);
-                var storedEvent = suspiciousEvent ?? webEvent;
+                analyzedEvent = detector.Analyze(webEvent);
+                var storedEvent = analyzedEvent ?? webEvent;
                 eventStore.Publish(storedEvent);
-                if (suspiciousEvent is not null)
+                observability.RecordEventProcessed(storedEvent);
+                if (analyzedEvent is not null)
                 {
-                    logger.LogWarning("Suspicious IIS activity detected for {Domain}: {Reason}", suspiciousEvent.Domain, suspiciousEvent.DetectionReason);
-                    autoDenyService.Apply(suspiciousEvent);
+                    logger.LogWarning(
+                        "Suspicious IIS activity detected. ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason}",
+                        analyzedEvent.ClientIp,
+                        analyzedEvent.Domain,
+                        analyzedEvent.RiskScore,
+                        analyzedEvent.RiskSeverity,
+                        analyzedEvent.DetectionReason);
+                    autoDenyService.Apply(analyzedEvent);
                 }
             }
             catch (Exception exception)
             {
-                logger.LogError(exception, "Unable to process IIS ETW event {EventId} from {ClientIp}.", webEvent.Id, webEvent.ClientIp);
+                var failedEvent = analyzedEvent ?? webEvent;
+                logger.LogError(
+                    exception,
+                    "Unable to process IIS ETW event {EventId}. ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason}",
+                    webEvent.Id,
+                    failedEvent.ClientIp,
+                    failedEvent.Domain,
+                    failedEvent.RiskScore,
+                    failedEvent.RiskSeverity,
+                    failedEvent.DetectionReason);
             }
         }
     }

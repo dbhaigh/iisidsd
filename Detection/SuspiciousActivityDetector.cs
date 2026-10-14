@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading;
 using iisidsd.Models;
 using iisidsd.Storage;
 using Microsoft.Extensions.Options;
@@ -11,7 +12,10 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
     private readonly DetectionOptions _options;
     private readonly IEventStore? _eventStore;
     private readonly string[] _suspiciousUriFragments;
+    private readonly string[] _scannerUserAgents;
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> _knownExtensionsByDomain = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, RequestHistory> _requestHistoryByIp = new(StringComparer.OrdinalIgnoreCase);
+    private int _historyCleanupCounter;
 
     public SuspiciousActivityDetector(IOptions<DetectionOptions> options)
         : this(options, eventStore: null)
@@ -26,14 +30,17 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
             .Where(static fragment => !string.IsNullOrWhiteSpace(fragment))
             .Select(static fragment => fragment.ToLowerInvariant())
             .ToArray();
+        _scannerUserAgents = _options.ScannerUserAgents
+            .Where(static userAgent => !string.IsNullOrWhiteSpace(userAgent))
+            .Select(static userAgent => userAgent.ToLowerInvariant())
+            .ToArray();
     }
 
     private static readonly HashSet<string> UnusualMethods = ["trace", "connect", "debug"];
-    private static readonly string[] ScannerUserAgents = ["sqlmap", "nikto", "nmap", "masscan", "burp"];
 
     public SecurityEvent? Analyze(SecurityEvent webEvent)
     {
-        var score = 0;
+        long score = 0;
         var reason = "IIS ETW request";
         var indicators = new List<string>();
 
@@ -41,9 +48,11 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
         var uri = (webEvent.Path ?? string.Empty).ToLowerInvariant();
         var agent = (webEvent.UserAgent ?? string.Empty).ToLowerInvariant();
 
+        var requestWindow = RecordRequest(webEvent);
+
         if (webEvent.StatusCode >= Math.Max(100, _options.MinimumSuspiciousStatusCode))
         {
-            score += 1;
+            score += Math.Max(0, _options.StatusScoreWeight);
             reason = "probing/error response";
             indicators.Add("status code meets configured suspicious threshold");
         }
@@ -51,7 +60,7 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
         if (!string.IsNullOrEmpty(webEvent.Path) &&
             webEvent.Path.Length >= Math.Max(1, _options.RequestPathLengthThreshold))
         {
-            score += 2;
+            score += Math.Max(0, _options.LongPathScoreWeight);
             if (reason == "IIS ETW request")
             {
                 reason = "unusually long request path";
@@ -61,28 +70,28 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
 
         if (IsRepeatedNotFoundScan(webEvent))
         {
-            score += 3;
+            score += Math.Max(0, _options.RepeatedNotFoundScoreWeight);
             reason = "repeated not found probing";
             indicators.Add("multiple 404 responses from the same client IP");
         }
 
         if (UnusualMethods.Contains(method))
         {
-            score += 3;
+            score += Math.Max(0, _options.UnusualMethodScoreWeight);
             reason = "unusual HTTP method";
             indicators.Add("unusual HTTP method");
         }
 
         if (_suspiciousUriFragments.Any(uri.Contains))
         {
-            score += 5;
+            score += Math.Max(0, _options.PathFragmentScoreWeight);
             reason = "suspicious request URI";
             indicators.Add("suspicious request URI pattern");
         }
 
         if (IsUnrecognizedFileTypeRequest(webEvent))
         {
-            score += 2;
+            score += Math.Max(0, _options.UnknownExtensionScoreWeight);
             if (reason is "IIS ETW request" or "probing/error response")
             {
                 reason = "unrecognized file type request";
@@ -90,9 +99,23 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
             indicators.Add("request targets file type not seen in site history");
         }
 
-        if (ScannerUserAgents.Any(agent.Contains))
+        if (requestWindow.RequestCount > Math.Max(0, _options.RateThreshold))
         {
-            score += 6;
+            score += Math.Max(0, _options.RequestRateScoreWeight);
+            reason = "high request rate";
+            indicators.Add("request rate exceeded the configured threshold");
+        }
+
+        if (requestWindow.UniquePathCount >= Math.Max(1, _options.PathScanUniquePathThreshold))
+        {
+            score += Math.Max(0, _options.PathScanScoreWeight);
+            reason = "path scanning activity";
+            indicators.Add("many unique request paths from the same client IP");
+        }
+
+        if (_scannerUserAgents.Any(agent.Contains))
+        {
+            score += Math.Max(0, _options.ScannerUserAgentScoreWeight);
             reason = "known security scanner user-agent";
             indicators.Add("known scanner user-agent");
         }
@@ -102,14 +125,124 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
             return null;
         }
 
+        var riskScore = (int)Math.Min(score, int.MaxValue);
         return webEvent with
         {
             IsSuspicious = true,
             DetectionReason = reason,
-            RiskScore = score,
-            RiskSeverity = GetSeverity(score),
+            RiskScore = riskScore,
+            RiskSeverity = GetSeverity(riskScore),
             RiskIndicators = indicators
         };
+    }
+
+    private RequestWindowSignals RecordRequest(SecurityEvent webEvent)
+    {
+        if (string.IsNullOrWhiteSpace(webEvent.ClientIp))
+        {
+            return default;
+        }
+
+        var ip = webEvent.ClientIp;
+        var currentBucket = webEvent.Timestamp.ToUnixTimeSeconds();
+        var rateWindowSeconds = Math.Max(1, _options.RateWindowSeconds);
+        var pathWindowSeconds = Math.Max(1, _options.PathScanWindowSeconds);
+        var maximumWindowSeconds = Math.Max(rateWindowSeconds, pathWindowSeconds);
+        var oldestBucket = currentBucket - maximumWindowSeconds + 1;
+        var normalizedPath = NormalizePath(webEvent.Path);
+        var history = _requestHistoryByIp.GetOrAdd(ip, static _ => new RequestHistory());
+        long requestCount;
+        int uniquePathCount;
+
+        while (true)
+        {
+            lock (history.Sync)
+            {
+                if (!_requestHistoryByIp.TryGetValue(ip, out var activeHistory) ||
+                    !ReferenceEquals(history, activeHistory))
+                {
+                    history = _requestHistoryByIp.GetOrAdd(ip, static _ => new RequestHistory());
+                    continue;
+                }
+
+                foreach (var staleBucket in history.Buckets.Keys.Where(bucket => bucket < oldestBucket).ToArray())
+                {
+                    history.Buckets.Remove(staleBucket);
+                }
+
+                if (!history.Buckets.TryGetValue(currentBucket, out var bucket))
+                {
+                    bucket = new RequestBucket();
+                    history.Buckets.Add(currentBucket, bucket);
+                }
+
+                bucket.RequestCount++;
+                if (normalizedPath.Length > 0)
+                {
+                    bucket.Paths.Add(normalizedPath);
+                }
+
+                var oldestRateBucket = currentBucket - rateWindowSeconds + 1;
+                requestCount = history.Buckets
+                    .Where(entry => entry.Key >= oldestRateBucket && entry.Key <= currentBucket)
+                    .Sum(static entry => entry.Value.RequestCount);
+                var oldestPathBucket = currentBucket - pathWindowSeconds + 1;
+                uniquePathCount = history.Buckets
+                    .Where(entry => entry.Key >= oldestPathBucket && entry.Key <= currentBucket)
+                    .SelectMany(static entry => entry.Value.Paths)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
+                history.LastActivityBucket = Math.Max(history.LastActivityBucket, currentBucket);
+            }
+
+            break;
+        }
+
+        if ((Interlocked.Increment(ref _historyCleanupCounter) & 0xff) == 0)
+        {
+            PruneInactiveHistories(currentBucket - maximumWindowSeconds + 1);
+        }
+
+        return new RequestWindowSignals(requestCount, uniquePathCount);
+    }
+
+    private void PruneInactiveHistories(long oldestActiveBucket)
+    {
+        foreach (var entry in _requestHistoryByIp)
+        {
+            lock (entry.Value.Sync)
+            {
+                if (entry.Value.LastActivityBucket < oldestActiveBucket)
+                {
+                    ((ICollection<KeyValuePair<string, RequestHistory>>)_requestHistoryByIp).Remove(entry);
+                }
+            }
+        }
+    }
+
+    private static string NormalizePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        return path.Split(['?', '#'], 2)[0].Trim().ToLowerInvariant();
+    }
+
+    private readonly record struct RequestWindowSignals(long RequestCount, int UniquePathCount);
+
+    private sealed class RequestHistory
+    {
+        public object Sync { get; } = new();
+        public Dictionary<long, RequestBucket> Buckets { get; } = [];
+        public long LastActivityBucket { get; set; } = long.MinValue;
+    }
+
+    private sealed class RequestBucket
+    {
+        public long RequestCount { get; set; }
+        public HashSet<string> Paths { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     private bool IsRepeatedNotFoundScan(SecurityEvent webEvent)

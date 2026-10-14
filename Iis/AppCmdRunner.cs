@@ -3,7 +3,7 @@ using System.Text;
 
 namespace iisidsd.Iis;
 
-internal sealed class AppCmdRunner(ILogger logger)
+internal sealed class AppCmdRunner(ILogger logger) : IAppCmdRunner
 {
     private readonly string _appCmdPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "inetsrv", "appcmd.exe");
     private readonly ILogger _logger = logger;

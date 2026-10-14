@@ -1,0 +1,29 @@
+@baseUrl = http://127.0.0.1:5080
+
+### Dashboard health, including ETW queue and SQLite status
+GET {{baseUrl}}/health
+Accept: application/json
+
+### Prometheus metrics (subject to DashboardAccessPolicy)
+GET {{baseUrl}}/metrics
+Accept: text/plain
+
+### IIS deny-list safety status and recent audit history
+GET {{baseUrl}}/api/iis/status
+Accept: application/json
+
+### Export findings as JSON (Windows Administrator)
+GET {{baseUrl}}/api/export/findings?format=json&limit=100
+Accept: application/json
+
+### Export findings as CSV (Windows Administrator)
+GET {{baseUrl}}/api/export/findings?format=csv&limit=100
+Accept: text/csv
+
+### Export retained events as JSON (Windows Administrator)
+GET {{baseUrl}}/api/export/events?format=json&limit=100
+Accept: application/json
+
+### Export retained events as CSV (Windows Administrator)
+GET {{baseUrl}}/api/export/events?format=csv&limit=100
+Accept: text/csv

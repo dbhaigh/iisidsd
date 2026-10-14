@@ -1,5 +1,25 @@
 # Change Log
 
+## 0.2.1 - 2026-10-14
+
+This release collects the changes made since 0.1.4.
+
+### Added
+- Durable per-IP and per-domain findings in SQLite, incrementally updated in the same transaction as each event and independently pruned by retention.
+- Configurable scoring for all detector signals, with per-IP request-rate and unique-path scanning windows and expanded exploit/scanner patterns.
+- Auditing for manual and automatic IIS deny-list actions, CIDR/exact-IP allow lists, temporary bans with expiry cleanup, and dry-run status.
+- OpenTelemetry metrics, Prometheus-formatted `/metrics`, and expanded health details for the ETW queue, dropped events, SQLite, and recent automatic denies.
+- Responsive dashboard improvements, including theme selection, searchable/sortable findings, bulk deny, resumable/pausable live events, IP timelines, risk indicators, and charts.
+- Administrator-only CSV and JSON exports for findings and retained events; CSV output protects against spreadsheet formula execution.
+- Startup validation for option groups and time-based event retention through `Storage:EventRetentionDays`, alongside the row-count limit.
+- Tray status for dry-run, dropped-event count, and the most recent automatic deny.
+
+### Changed
+- SQLite stores now share per-database write synchronization; transient finding-prune lock errors are retried.
+- Findings responses are capped at 500 entries, and detector scores saturate instead of overflowing.
+- README and risk-scoring documentation describe the release features, configuration, retention, and security model.
+- Expanded deterministic tests cover detector signals, persistence and concurrency, allow-list and temporary-ban safety, exports, and authorization.
+
 ## 0.1.4 - 2026-10-12
 
 ### Security

@@ -14,13 +14,23 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls
 
-## Release 0.1.4 highlights
+## Release 0.2.1 highlights
 
 - Dashboard access is loopback-only by default. Optional remote access requires Windows Authentication and HTTPS.
 - Ban-count and IIS deny-list HTTP writes require an authenticated Windows Administrator; deny-list changes also require `IisAdmin:EnableDenyListChanges`.
 - Automatic IIS blocking requires a repeated-404 signal or a critical event with multiple distinct indicators.
+- Per-IP findings and per-domain summaries are updated incrementally in SQLite rather than re-aggregated from the event retention window for every request.
+- All scoring weights are configurable; request-rate and unique-path scanning signals use short, per-IP sliding windows and expanded configurable exploit/scanner patterns.
+- Allow-listed addresses are never denied. Temporary bans expire through a background cleaner; existing IIS rules are not assigned a service-owned expiry.
+- The dashboard provides sortable/searchable findings, bulk deny, live-event pause and reconnection, IP timelines, risk indicators, and risk/top-IP charts.
 - ETW capture is decoupled from database and IIS operations through a bounded ingestion queue.
 - Tray service lifecycle actions run asynchronously to keep the Windows Forms UI responsive.
+- Option values are validated at startup; invalid limits, thresholds, URLs, provider IDs, or allow-list ranges stop startup with validation errors.
+- Event retention is bounded by both `Storage:EventRetentionLimit` and `Storage:EventRetentionDays`; IP findings are pruned separately by `Storage:FindingRetentionDays`.
+- Findings and retained events can be exported as CSV or JSON by authenticated Windows Administrators.
+- The tray menu shows the deny-list dry-run state, dropped ETW event count, and most recent automatic deny-list action.
+- Health status includes SQLite, ETW queue and dropped-event details, dry-run state, and the last automatic deny-list action. `/metrics` exposes Prometheus-formatted counters and histograms.
+- Automatic and manual deny-list mutations are audited. Allow-listed addresses are never denied, and temporary entries are removed after their configured expiry.
 
 ## Project layout
 
@@ -48,6 +58,7 @@ Controls ETW ingestion.
 - `SessionName`
 - `SubscriptionBufferSize`
 - `IngestionBufferSize`
+- `ProviderName` and `SessionName` must be non-empty; both buffer sizes must be positive and `ProviderId` must not be empty.
 
 ### `Detection`
 
@@ -57,21 +68,44 @@ Controls URL-risk heuristics.
 - `RequestPathLengthThreshold`
 - `NotFoundBurstThreshold`
 - `NotFoundBurstLookbackLimit`
+- `StatusScoreWeight`
+- `LongPathScoreWeight`
+- `RepeatedNotFoundScoreWeight`
+- `UnusualMethodScoreWeight`
+- `PathFragmentScoreWeight`
+- `UnknownExtensionScoreWeight`
+- `ScannerUserAgentScoreWeight`
+- `RequestRateScoreWeight`
+- `PathScanScoreWeight`
+- `RateThreshold`
+- `RateWindowSeconds`
+- `PathScanUniquePathThreshold`
+- `PathScanWindowSeconds`
 - `SuspiciousPathFragments`
+- `ScannerUserAgents`
+
+All score weights must be non-negative; setting a weight to zero disables its scoring contribution. Thresholds and windows must be positive, except `RateThreshold` may be zero.
 
 ### `Storage`
 
 Controls persistent storage.
 
 - `DatabasePath` - defaults to `data/iisidsd.sqlite3`
-- `EventRetentionLimit` - max retained event rows
-- `FindingRetentionDays` - reserved for future retention workflows
+- `EventRetentionLimit` - maximum retained event rows
+- `EventRetentionDays` - maximum age of retained events; age and row-count pruning are both enforced
+- `FindingRetentionDays` - age after which inactive IP findings and expired per-domain summaries are pruned
 
 ### `IisAdmin`
 
 Controls IIS deny-list write safety.
 
 - `EnableDenyListChanges` - defaults to `false`
+- `AllowList` - exact IPv4/IPv6 addresses or CIDR ranges that are never added to an IIS deny list
+- `TemporaryBanMinutes` - positive values set an expiry; `0` means permanent
+- `DryRun` - defaults to `true`; records intended actions without changing IIS
+- `RequireMultipleIndicators` - when enabled, automatic denial requires multiple distinct indicators
+
+`EnableDenyListChanges` is the master switch for all deny-list writes. Dry-run mode does not invoke IIS mutation commands. Manual and automatic actions, including dry-run intentions, are recorded in the SQLite audit log.
 
 ### `Tray`
 
@@ -79,13 +113,21 @@ Controls the notification-area shortcut.
 
 - `BrowserUrl`
 
+The tray menu also displays operational status fetched from the local `/health` endpoint. `BrowserUrl` must be an absolute HTTP or HTTPS URL.
+
+### `OpenTelemetry`
+
+- `OtlpEndpoint` - optional absolute HTTP or HTTPS OTLP exporter endpoint; leave empty to disable remote exporting. `/metrics` remains available in Prometheus text format.
+
 ### Dashboard network access
 
 The `Urls` setting controls the dashboard listener. The default listens only on loopback at `http://127.0.0.1:5080/`.
 
 By default `Urls` is `http://127.0.0.1:5080` and non-loopback requests are rejected, even if the listener is rebound externally. To enable remote access, set `Dashboard:RemoteAccessEnabled` to `true`, bind `Urls` to an HTTPS address, and configure a Kestrel server certificate using the standard Kestrel certificate settings. Remote requests require Windows Authentication and HTTPS. Do not put certificate passwords in source-controlled configuration.
 
-When remote access is enabled, the dashboard requires Windows Authentication. Ban-count and IIS deny-list write APIs additionally require the caller to be a member of the local Windows Administrators group. IIS deny-list changes also require `IisAdmin:EnableDenyListChanges=true`, which is disabled by default. Restrict inbound firewall rules to the intended clients.
+When remote access is enabled, the dashboard requires Windows Authentication. Ban-count writes, IIS administration writes, IIS status/audit data, and both export endpoints additionally require the caller to be a member of the local Windows Administrators group. IIS deny-list changes also require `IisAdmin:EnableDenyListChanges=true`, which is disabled by default. Restrict inbound firewall rules to the intended clients.
+
+The findings and events export endpoints return retained data and may contain client addresses, paths, host names, and user-agent values. They are administrator-only. CSV output quotes fields and prefixes spreadsheet formula-like values to prevent CSV formula execution.
 
 ## Running locally
 
@@ -103,7 +145,7 @@ Run:
 
 The dashboard is served from the configured `Urls` value in `appsettings.json`. Remote access must also be explicitly enabled and served over HTTPS.
 
-Installing the Windows service through the tray configures automatic startup and service recovery restarts. The tray menu reports both service state and dashboard health.
+Installing the Windows service through the tray configures automatic startup and service recovery restarts. The tray menu reports service state, dashboard health, deny-list dry-run status, dropped events, and the latest automatic deny-list action.
 
 ## Dashboard views
 
@@ -138,14 +180,17 @@ Shows discovered IIS sites and the deny list for the selected site.
 ### Health and events
 
 - `GET /health`
+- `GET /metrics`
 - `GET /api/events?limit=&clientIp=&domain=&suspiciousOnly=`
 - `GET /api/events/stream?clientIp=&domain=&suspiciousOnly=`
 
 ### Findings
 
-- `GET /api/findings?limit=&domain=`
+- `GET /api/findings?limit=&domain=` (maximum 500 findings per response)
 - `GET /api/findings/{clientIp}?domain=`
 - `GET /api/findings/{clientIp}/events?limit=&domain=&suspiciousOnly=`
+- `GET /api/export/findings?format=json|csv&limit=&domain=` (Windows Administrator)
+- `GET /api/export/events?format=json|csv&limit=&clientIp=&domain=&suspiciousOnly=` (Windows Administrator)
 
 ### Ban counts
 
@@ -165,11 +210,20 @@ Current automated validation includes:
 
 - suspicious activity detector tests
 - IP aggregation tests
-- SQLite event store tests
+- SQLite event store and retention tests
+- configuration fail-fast validation tests
+- export endpoint happy-path and authorization tests
+- deny-list, allow-list, audit, and integration tests
 
 Run tests with:
 
 - `dotnet test`
+
+Publish the framework-dependent Windows x64 release binaries with:
+
+- `dotnet publish iisidsd.csproj --configuration Release --runtime win-x64 --self-contained false`
+
+The output is written under `bin/Release/net10.0-windows/win-x64/publish`; the target machine must have the .NET 10 runtime installed.
 
 ## Notes
 

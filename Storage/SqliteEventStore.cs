@@ -1,9 +1,11 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using System.Threading.Channels;
 using iisidsd.Configuration;
 using iisidsd.Models;
+using iisidsd.Observability;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 
@@ -12,13 +14,18 @@ namespace iisidsd.Storage;
 public sealed class SqliteEventStore(
     IOptions<IisEtwOptions> etwOptions,
     IOptions<StorageOptions> storageOptions,
-    IHostEnvironment hostEnvironment) : IEventStore
+    IHostEnvironment hostEnvironment,
+    IFindingStore findingStore,
+    IisObservability observability) : IEventStore, IEventRetentionStore
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly int _subscriptionBufferSize = etwOptions.Value.SubscriptionBufferSize;
     private readonly int _eventRetentionLimit = Math.Max(1, storageOptions.Value.EventRetentionLimit);
+    private readonly int _eventRetentionDays = storageOptions.Value.EventRetentionDays;
     private readonly string _databasePath = GetDatabasePath(hostEnvironment.ContentRootPath, storageOptions.Value.DatabasePath);
     private readonly Lock _sync = new();
+    private readonly Lock _writeSync = SqliteDatabaseLock.For(
+        GetDatabasePath(hostEnvironment.ContentRootPath, storageOptions.Value.DatabasePath));
     private readonly ConcurrentDictionary<Guid, Channel<SecurityEvent>> _subscribers = [];
 
     public IReadOnlyList<SecurityEvent> GetRecent(int limit, string? clientIp = null, string? domain = null, bool suspiciousOnly = false)
@@ -73,82 +80,122 @@ public sealed class SqliteEventStore(
     {
         lock (_sync)
         {
-            using var connection = OpenConnection();
-            using var transaction = connection.BeginTransaction();
-            using var insertCommand = connection.CreateCommand();
-            insertCommand.Transaction = transaction;
-            insertCommand.CommandText = """
-                INSERT INTO events (
-                    event_id,
-                    timestamp_utc,
-                    server,
-                    domain,
-                    method,
-                    path,
-                    client_ip,
-                    status_code,
-                    user_agent,
-                    properties_json,
-                    is_suspicious,
-                    detection_reason,
-                    risk_score,
-                    risk_severity,
-                    risk_indicators_json)
-                VALUES (
-                    $eventId,
-                    $timestamp,
-                    $server,
-                    $domain,
-                    $method,
-                    $path,
-                    $clientIp,
-                    $statusCode,
-                    $userAgent,
-                    $properties,
-                    $isSuspicious,
-                    $detectionReason,
-                    $riskScore,
-                    $riskSeverity,
-                    $riskIndicators);
-                """;
-            insertCommand.Parameters.AddWithValue("$eventId", webEvent.Id);
-            insertCommand.Parameters.AddWithValue("$timestamp", webEvent.Timestamp.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
-            insertCommand.Parameters.AddWithValue("$server", webEvent.Server);
-            insertCommand.Parameters.AddWithValue("$domain", webEvent.Domain);
-            insertCommand.Parameters.AddWithValue("$method", webEvent.Method);
-            insertCommand.Parameters.AddWithValue("$path", webEvent.Path);
-            insertCommand.Parameters.AddWithValue("$clientIp", webEvent.ClientIp);
-            insertCommand.Parameters.AddWithValue("$statusCode", webEvent.StatusCode);
-            insertCommand.Parameters.AddWithValue("$userAgent", webEvent.UserAgent);
-            insertCommand.Parameters.AddWithValue("$properties", JsonSerializer.Serialize(webEvent.Properties, SerializerOptions));
-            insertCommand.Parameters.AddWithValue("$isSuspicious", webEvent.IsSuspicious ? 1 : 0);
-            insertCommand.Parameters.AddWithValue("$detectionReason", (object?)webEvent.DetectionReason ?? DBNull.Value);
-            insertCommand.Parameters.AddWithValue("$riskScore", webEvent.RiskScore);
-            insertCommand.Parameters.AddWithValue("$riskSeverity", webEvent.RiskSeverity);
-            insertCommand.Parameters.AddWithValue("$riskIndicators", JsonSerializer.Serialize(webEvent.RiskIndicators ?? [], SerializerOptions));
-            insertCommand.ExecuteNonQuery();
+            var started = Stopwatch.GetTimestamp();
+            try
+            {
+                lock (_writeSync)
+                {
+                    using var connection = OpenConnection();
+                    using var transaction = connection.BeginTransaction();
+                    using var insertCommand = connection.CreateCommand();
+                    insertCommand.Transaction = transaction;
+                    insertCommand.CommandText = """
+                        INSERT INTO events (
+                            event_id,
+                            timestamp_utc,
+                            server,
+                            domain,
+                            method,
+                            path,
+                            client_ip,
+                            status_code,
+                            user_agent,
+                            properties_json,
+                            is_suspicious,
+                            detection_reason,
+                            risk_score,
+                            risk_severity,
+                            risk_indicators_json)
+                        VALUES (
+                            $eventId,
+                            $timestamp,
+                            $server,
+                            $domain,
+                            $method,
+                            $path,
+                            $clientIp,
+                            $statusCode,
+                            $userAgent,
+                            $properties,
+                            $isSuspicious,
+                            $detectionReason,
+                            $riskScore,
+                            $riskSeverity,
+                            $riskIndicators);
+                        """;
+                    insertCommand.Parameters.AddWithValue("$eventId", webEvent.Id);
+                    insertCommand.Parameters.AddWithValue("$timestamp", webEvent.Timestamp.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
+                    insertCommand.Parameters.AddWithValue("$server", webEvent.Server);
+                    insertCommand.Parameters.AddWithValue("$domain", webEvent.Domain);
+                    insertCommand.Parameters.AddWithValue("$method", webEvent.Method);
+                    insertCommand.Parameters.AddWithValue("$path", webEvent.Path);
+                    insertCommand.Parameters.AddWithValue("$clientIp", webEvent.ClientIp);
+                    insertCommand.Parameters.AddWithValue("$statusCode", webEvent.StatusCode);
+                    insertCommand.Parameters.AddWithValue("$userAgent", webEvent.UserAgent);
+                    insertCommand.Parameters.AddWithValue("$properties", JsonSerializer.Serialize(webEvent.Properties, SerializerOptions));
+                    insertCommand.Parameters.AddWithValue("$isSuspicious", webEvent.IsSuspicious ? 1 : 0);
+                    insertCommand.Parameters.AddWithValue("$detectionReason", (object?)webEvent.DetectionReason ?? DBNull.Value);
+                    insertCommand.Parameters.AddWithValue("$riskScore", webEvent.RiskScore);
+                    insertCommand.Parameters.AddWithValue("$riskSeverity", webEvent.RiskSeverity);
+                    insertCommand.Parameters.AddWithValue("$riskIndicators", JsonSerializer.Serialize(webEvent.RiskIndicators ?? [], SerializerOptions));
+                    insertCommand.ExecuteNonQuery();
 
-            using var pruneCommand = connection.CreateCommand();
-            pruneCommand.Transaction = transaction;
-            pruneCommand.CommandText = """
-                DELETE FROM events
-                WHERE sequence_id <= COALESCE(
-                    (
-                        SELECT sequence_id
-                        FROM events
-                        ORDER BY sequence_id DESC
-                        LIMIT 1 OFFSET $retentionLimit
-                    ),
-                    -1);
-                """;
-            pruneCommand.Parameters.AddWithValue("$retentionLimit", _eventRetentionLimit);
-            pruneCommand.ExecuteNonQuery();
-            transaction.Commit();
+                    using var pruneCommand = connection.CreateCommand();
+                    pruneCommand.Transaction = transaction;
+                    pruneCommand.CommandText = """
+                        DELETE FROM events
+                        WHERE timestamp_utc < $cutoff
+                           OR sequence_id <= COALESCE(
+                                (
+                                    SELECT sequence_id
+                                    FROM events
+                                    ORDER BY sequence_id DESC
+                                    LIMIT 1 OFFSET $retentionLimit
+                                ),
+                                -1);
+                        """;
+                    pruneCommand.Parameters.AddWithValue("$retentionLimit", _eventRetentionLimit);
+                    pruneCommand.Parameters.AddWithValue(
+                        "$cutoff",
+                        DateTimeOffset.UtcNow.AddDays(-_eventRetentionDays).UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
+                    pruneCommand.ExecuteNonQuery();
+                    findingStore.Upsert(webEvent, connection, transaction);
+                    transaction.Commit();
+                }
+            }
+            finally
+            {
+                observability.RecordSqliteWrite(Stopwatch.GetElapsedTime(started));
+            }
         }
 
         foreach (var subscriber in _subscribers.Values)
         {
             subscriber.Writer.TryWrite(webEvent);
+        }
+    }
+
+    public int PruneExpiredEvents(DateTimeOffset olderThan)
+    {
+        var cutoff = olderThan.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            lock (_sync)
+            {
+                lock (_writeSync)
+                {
+                    using var connection = OpenConnection();
+                    using var command = connection.CreateCommand();
+                    command.CommandText = "DELETE FROM events WHERE timestamp_utc < $cutoff;";
+                    command.Parameters.AddWithValue("$cutoff", cutoff);
+                    return command.ExecuteNonQuery();
+                }
+            }
+        }
+        finally
+        {
+            observability.RecordSqliteWrite(Stopwatch.GetElapsedTime(started));
         }
     }
 
@@ -184,7 +231,7 @@ public sealed class SqliteEventStore(
         return connection;
     }
 
-    private static SecurityEvent ReadEvent(SqliteDataReader reader)
+    internal static SecurityEvent ReadEvent(SqliteDataReader reader)
     {
         var properties = JsonSerializer.Deserialize<Dictionary<string, string>>(reader.GetString(9), SerializerOptions) ?? [];
         var riskIndicators = JsonSerializer.Deserialize<List<string>>(reader.GetString(14), SerializerOptions) ?? [];

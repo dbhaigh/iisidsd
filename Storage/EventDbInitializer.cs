@@ -7,9 +7,12 @@ namespace iisidsd.Storage;
 public sealed class EventDbInitializer(
     IOptions<StorageOptions> storageOptions,
     IHostEnvironment hostEnvironment,
+    IFindingStore findingStore,
     ILogger<EventDbInitializer> logger) : IHostedService
 {
     private readonly string _databasePath = GetDatabasePath(hostEnvironment.ContentRootPath, storageOptions.Value.DatabasePath);
+    private readonly IFindingStore _findingStore = findingStore;
+    private readonly ILogger<EventDbInitializer> _logger = logger;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -47,13 +50,84 @@ public sealed class EventDbInitializer(
                 CREATE INDEX IF NOT EXISTS ix_events_timestamp_utc ON events(timestamp_utc DESC);
                 CREATE INDEX IF NOT EXISTS ix_events_client_ip ON events(client_ip);
                 CREATE INDEX IF NOT EXISTS ix_events_is_suspicious ON events(is_suspicious, timestamp_utc DESC);
+
+                CREATE TABLE IF NOT EXISTS ip_findings (
+                    client_ip TEXT PRIMARY KEY COLLATE NOCASE,
+                    first_seen TEXT NOT NULL,
+                    last_seen TEXT NOT NULL,
+                    request_count INTEGER NOT NULL,
+                    suspicious_count INTEGER NOT NULL,
+                    highest_risk_score INTEGER NOT NULL,
+                    highest_risk_severity TEXT NOT NULL,
+                    domains_json TEXT NOT NULL,
+                    reasons_json TEXT NOT NULL,
+                    indicators_json TEXT NOT NULL,
+                    ban_count INTEGER NOT NULL DEFAULT 0,
+                    updated_utc TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_ip_findings_risk
+                    ON ip_findings(highest_risk_score DESC, suspicious_count DESC, last_seen DESC);
+                CREATE INDEX IF NOT EXISTS ix_ip_findings_last_seen ON ip_findings(last_seen);
+
+                CREATE TABLE IF NOT EXISTS ip_finding_domains (
+                    client_ip TEXT NOT NULL COLLATE NOCASE,
+                    domain TEXT NOT NULL COLLATE NOCASE,
+                    first_seen TEXT NOT NULL,
+                    last_seen TEXT NOT NULL,
+                    request_count INTEGER NOT NULL,
+                    suspicious_count INTEGER NOT NULL,
+                    highest_risk_score INTEGER NOT NULL,
+                    highest_risk_severity TEXT NOT NULL,
+                    reasons_json TEXT NOT NULL,
+                    indicators_json TEXT NOT NULL,
+                    PRIMARY KEY (client_ip, domain)
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_ip_finding_domains_domain
+                    ON ip_finding_domains(domain, highest_risk_score DESC, suspicious_count DESC, last_seen DESC);
+
+                CREATE TABLE IF NOT EXISTS iis_deny_list_audit (
+                    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    actor TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    site_name TEXT NOT NULL,
+                    client_ip TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    occurred_utc TEXT NOT NULL,
+                    dry_run INTEGER NOT NULL,
+                    outcome TEXT NOT NULL,
+                    expires_utc TEXT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_iis_deny_list_audit_actor_action
+                    ON iis_deny_list_audit(actor, action, audit_id DESC);
+
+                CREATE INDEX IF NOT EXISTS ix_iis_deny_list_audit_occurred
+                    ON iis_deny_list_audit(occurred_utc DESC);
+
+                CREATE TABLE IF NOT EXISTS iis_temporary_denies (
+                    site_name TEXT NOT NULL COLLATE NOCASE,
+                    client_ip TEXT NOT NULL COLLATE NOCASE,
+                    expires_utc TEXT NOT NULL,
+                    PRIMARY KEY (site_name, client_ip)
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_iis_temporary_denies_expiry
+                    ON iis_temporary_denies(expires_utc);
                 """;
             command.ExecuteNonQuery();
         }
 
         EnsureBanCountSchema(connection);
 
-        logger.LogInformation("Initialized event database at {DatabasePath}.", _databasePath);
+        var backfilledEvents = _findingStore.BackfillFromExistingEvents();
+        if (backfilledEvents > 0)
+        {
+            _logger.LogInformation("Backfilled findings from {EventCount} retained events.", backfilledEvents);
+        }
+
+        _logger.LogInformation("Initialized event database at {DatabasePath}.", _databasePath);
         return Task.CompletedTask;
     }
 

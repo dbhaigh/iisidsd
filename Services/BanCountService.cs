@@ -1,6 +1,7 @@
 using System.Globalization;
 using iisidsd.Configuration;
 using iisidsd.Models;
+using iisidsd.Storage;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 
@@ -12,6 +13,8 @@ public sealed class BanCountService(
 {
     private readonly string _databasePath = GetDatabasePath(hostEnvironment.ContentRootPath, storageOptions.Value.DatabasePath);
     private readonly Lock _sync = new();
+    private readonly Lock _writeSync = SqliteDatabaseLock.For(
+        GetDatabasePath(hostEnvironment.ContentRootPath, storageOptions.Value.DatabasePath));
 
     public IReadOnlyList<BanCountRecord> GetBanCounts(int limit, string? domain = null)
     {
@@ -161,7 +164,7 @@ public sealed class BanCountService(
 
         var normalizedDomain = NormalizeDomainKey(domain);
         var updated = new BanCountRecord(clientIp, banCount, DateTimeOffset.UtcNow);
-        lock (_sync)
+        lock (_writeSync)
         {
             using var connection = OpenConnection();
             using var command = connection.CreateCommand();
@@ -177,6 +180,7 @@ public sealed class BanCountService(
             command.Parameters.AddWithValue("$banCount", updated.BanCount);
             command.Parameters.AddWithValue("$lastUpdatedUtc", updated.LastUpdated.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
             command.ExecuteNonQuery();
+            UpdateFindingBanCount(connection, transaction: null, clientIp: clientIp);
         }
 
         return updated;
@@ -200,7 +204,7 @@ public sealed class BanCountService(
         }
 
         var lastUpdatedUtc = DateTimeOffset.UtcNow.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
-        lock (_sync)
+        lock (_writeSync)
         {
             using var connection = OpenConnection();
             using var transaction = connection.BeginTransaction();
@@ -221,6 +225,7 @@ public sealed class BanCountService(
                 command.ExecuteNonQuery();
             }
 
+            UpdateFindingBanCount(connection, transaction, clientIp);
             transaction.Commit();
         }
     }
@@ -242,6 +247,21 @@ public sealed class BanCountService(
             reader.GetString(0),
             reader.GetInt32(1),
             DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind));
+
+    private static void UpdateFindingBanCount(SqliteConnection connection, SqliteTransaction? transaction, string clientIp)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            UPDATE ip_findings
+            SET ban_count = COALESCE(
+                (SELECT SUM(ban_count) FROM ban_counts WHERE client_ip = $clientIp),
+                0)
+            WHERE client_ip = $clientIp;
+            """;
+        command.Parameters.AddWithValue("$clientIp", clientIp);
+        command.ExecuteNonQuery();
+    }
 
     private static string NormalizeDomainKey(string? domain)
         => string.IsNullOrWhiteSpace(domain)

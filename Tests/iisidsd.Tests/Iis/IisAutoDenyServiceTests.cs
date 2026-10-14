@@ -14,10 +14,12 @@ public sealed class IisAutoDenyServiceTests
     {
         var denyListService = new FakeIisDenyListService(["example.test-site"]);
         var banCountService = new FakeBanCountService();
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true });
         var service = new IisAutoDenyService(
             denyListService,
             banCountService,
-            Options.Create(new IisAdminOptions { EnableDenyListChanges = true }),
+            new IisIpAllowList(options),
+            options,
             NullLogger<IisAutoDenyService>.Instance);
         var securityEvent = new SecurityEvent(
             DateTimeOffset.UtcNow,
@@ -46,10 +48,12 @@ public sealed class IisAutoDenyServiceTests
     {
         var denyListService = new FakeIisDenyListService(["example.test-site"]);
         var banCountService = new FakeBanCountService();
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
         var service = new IisAutoDenyService(
             denyListService,
             banCountService,
-            Options.Create(new IisAdminOptions { EnableDenyListChanges = true }),
+            new IisIpAllowList(options),
+            options,
             NullLogger<IisAutoDenyService>.Instance);
         var securityEvent = new SecurityEvent(
             DateTimeOffset.UtcNow,
@@ -72,6 +76,7 @@ public sealed class IisAutoDenyServiceTests
         Assert.Single(denyListService.Requests);
         Assert.Equal("203.0.113.7", denyListService.Requests[0].ClientIp);
         Assert.Equal("example.test", Assert.Single(denyListService.Requests[0].Domains));
+        Assert.Equal("system:auto-deny", denyListService.Requests[0].Actor);
         Assert.Single(banCountService.IncrementRequests);
     }
 
@@ -80,10 +85,12 @@ public sealed class IisAutoDenyServiceTests
     {
         var denyListService = new FakeIisDenyListService(["example.test-site"]);
         var banCountService = new FakeBanCountService();
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
         var service = new IisAutoDenyService(
             denyListService,
             banCountService,
-            Options.Create(new IisAdminOptions { EnableDenyListChanges = true }),
+            new IisIpAllowList(options),
+            options,
             NullLogger<IisAutoDenyService>.Instance);
         var securityEvent = new SecurityEvent(
             DateTimeOffset.UtcNow,
@@ -112,10 +119,12 @@ public sealed class IisAutoDenyServiceTests
     {
         var denyListService = new FakeIisDenyListService(["example.test-site"]);
         var banCountService = new FakeBanCountService();
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true });
         var service = new IisAutoDenyService(
             denyListService,
             banCountService,
-            Options.Create(new IisAdminOptions { EnableDenyListChanges = true }),
+            new IisIpAllowList(options),
+            options,
             NullLogger<IisAutoDenyService>.Instance);
         var securityEvent = new SecurityEvent(
             DateTimeOffset.UtcNow,
@@ -144,10 +153,12 @@ public sealed class IisAutoDenyServiceTests
     {
         var denyListService = new FakeIisDenyListService(["example.test-site"]);
         var banCountService = new FakeBanCountService();
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = false });
         var service = new IisAutoDenyService(
             denyListService,
             banCountService,
-            Options.Create(new IisAdminOptions { EnableDenyListChanges = false }),
+            new IisIpAllowList(options),
+            options,
             NullLogger<IisAutoDenyService>.Instance);
         var securityEvent = new SecurityEvent(
             DateTimeOffset.UtcNow,
@@ -171,21 +182,133 @@ public sealed class IisAutoDenyServiceTests
         Assert.Empty(banCountService.IncrementRequests);
     }
 
+    [Fact]
+    public void Apply_RequireMultipleIndicatorsSkipsSingleIndicatorRepeatedNotFound()
+    {
+        var denyListService = new FakeIisDenyListService(["example.test-site"]);
+        var banCountService = new FakeBanCountService();
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true });
+        var service = new IisAutoDenyService(
+            denyListService,
+            banCountService,
+            new IisIpAllowList(options),
+            options,
+            NullLogger<IisAutoDenyService>.Instance);
+        var securityEvent = new SecurityEvent(
+            DateTimeOffset.UtcNow,
+            "server01",
+            "example.test",
+            "GET",
+            "/missing",
+            "203.0.113.10",
+            404,
+            "unit-test",
+            new Dictionary<string, string>(),
+            IsSuspicious: true,
+            RiskSeverity: "High",
+            RiskIndicators: ["multiple 404 responses from the same client IP"]);
+
+        service.Apply(securityEvent);
+
+        Assert.Empty(denyListService.Requests);
+    }
+
+    [Fact]
+    public void Apply_AllowListedIpIsNeverDenied()
+    {
+        var denyListService = new FakeIisDenyListService(["example.test-site"]);
+        var banCountService = new FakeBanCountService();
+        var options = Options.Create(new IisAdminOptions
+        {
+            EnableDenyListChanges = true,
+            AllowList = ["203.0.113.0/24"]
+        });
+        var service = new IisAutoDenyService(
+            denyListService,
+            banCountService,
+            new IisIpAllowList(options),
+            options,
+            NullLogger<IisAutoDenyService>.Instance);
+        var securityEvent = new SecurityEvent(
+            DateTimeOffset.UtcNow,
+            "server01",
+            "example.test",
+            "TRACE",
+            "/.env",
+            "203.0.113.11",
+            404,
+            "sqlmap/1.0",
+            new Dictionary<string, string>(),
+            IsSuspicious: true,
+            RiskSeverity: "Critical",
+            RiskIndicators: ["path traversal", "known scanner user-agent"]);
+
+        service.Apply(securityEvent);
+
+        Assert.Empty(denyListService.Requests);
+        Assert.Empty(banCountService.IncrementRequests);
+    }
+
+    [Fact]
+    public void Apply_DryRunLogsPlannedDenyWithoutIncrementingBanCounts()
+    {
+        var denyListService = new FakeIisDenyListService(["example.test-site"]);
+        var banCountService = new FakeBanCountService();
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = true });
+        var service = new IisAutoDenyService(
+            denyListService,
+            banCountService,
+            new IisIpAllowList(options),
+            options,
+            NullLogger<IisAutoDenyService>.Instance);
+        var securityEvent = new SecurityEvent(
+            DateTimeOffset.UtcNow,
+            "server01",
+            "example.test",
+            "TRACE",
+            "/.env",
+            "203.0.113.12",
+            404,
+            "sqlmap/1.0",
+            new Dictionary<string, string>(),
+            IsSuspicious: true,
+            RiskSeverity: "Critical",
+            RiskIndicators: ["path traversal", "known scanner user-agent"]);
+
+        service.Apply(securityEvent);
+
+        Assert.Single(denyListService.Requests);
+        Assert.Empty(banCountService.IncrementRequests);
+    }
+
     private sealed class FakeIisDenyListService(IReadOnlyList<string> sitesToUpdate) : IIisDenyListService
     {
-        public List<(string ClientIp, IReadOnlyList<string> Domains)> Requests { get; } = [];
+        public List<(string ClientIp, IReadOnlyList<string> Domains, string Actor, string Reason)> Requests { get; } = [];
 
         public IReadOnlyList<string> GetDeniedIps(string siteName) => [];
 
-        public bool AddDeniedIp(string siteName, string clientIp) => true;
+        public bool AddDeniedIp(
+            string siteName,
+            string clientIp,
+            string actor = "manual",
+            string reason = "Manual deny-list request",
+            SecurityEvent? securityEvent = null,
+            string? domain = null) => true;
 
-        public IReadOnlyList<string> AddDeniedIpToDomains(string clientIp, IEnumerable<string> domains)
+        public IReadOnlyList<string> AddDeniedIpToDomains(
+            string clientIp,
+            IEnumerable<string> domains,
+            string actor = "manual",
+            string reason = "Manual deny-list request",
+            SecurityEvent? securityEvent = null)
         {
-            Requests.Add((clientIp, domains.ToArray()));
+            Requests.Add((clientIp, domains.ToArray(), actor, reason));
             return sitesToUpdate;
         }
 
-        public bool RemoveDeniedIp(string siteName, string clientIp) => true;
+        public bool RemoveDeniedIp(string siteName, string clientIp, string actor = "manual", string reason = "Manual deny-list removal") => true;
+
+        public bool RemoveExpiredDeniedIp(TemporaryDenyListEntry entry) => true;
     }
 
     private sealed class FakeBanCountService : IBanCountService

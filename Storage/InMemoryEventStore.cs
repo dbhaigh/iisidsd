@@ -6,9 +6,10 @@ using Microsoft.Extensions.Options;
 
 namespace iisidsd.Storage;
 
-public sealed class InMemoryEventStore(IOptions<IisEtwOptions> etwOptions, IOptions<StorageOptions> storageOptions) : IEventStore
+public sealed class InMemoryEventStore(IOptions<IisEtwOptions> etwOptions, IOptions<StorageOptions> storageOptions) : IEventStore, IEventRetentionStore
 {
     private readonly int _retentionLimit = Math.Max(1, storageOptions.Value.EventRetentionLimit);
+    private readonly int _retentionDays = storageOptions.Value.EventRetentionDays;
     private readonly int _subscriptionBufferSize = Math.Max(1, etwOptions.Value.SubscriptionBufferSize);
     private readonly LinkedList<SecurityEvent> _events = [];
     private readonly Lock _sync = new();
@@ -34,6 +35,7 @@ public sealed class InMemoryEventStore(IOptions<IisEtwOptions> etwOptions, IOpti
         lock (_sync)
         {
             _events.AddLast(webEvent);
+            PruneExpiredEventsCore(DateTimeOffset.UtcNow.AddDays(-_retentionDays));
             while (_events.Count > _retentionLimit)
             {
                 _events.RemoveFirst();
@@ -43,6 +45,14 @@ public sealed class InMemoryEventStore(IOptions<IisEtwOptions> etwOptions, IOpti
         foreach (var subscriber in _subscribers.Values)
         {
             subscriber.Writer.TryWrite(webEvent);
+        }
+    }
+
+    public int PruneExpiredEvents(DateTimeOffset olderThan)
+    {
+        lock (_sync)
+        {
+            return PruneExpiredEventsCore(olderThan);
         }
     }
 
@@ -64,5 +74,24 @@ public sealed class InMemoryEventStore(IOptions<IisEtwOptions> etwOptions, IOpti
             }
         });
         return channel.Reader;
+    }
+
+    private int PruneExpiredEventsCore(DateTimeOffset olderThan)
+    {
+        var prunedCount = 0;
+        var node = _events.First;
+        while (node is not null)
+        {
+            var next = node.Next;
+            if (node.Value.Timestamp < olderThan)
+            {
+                _events.Remove(node);
+                prunedCount++;
+            }
+
+            node = next;
+        }
+
+        return prunedCount;
     }
 }
