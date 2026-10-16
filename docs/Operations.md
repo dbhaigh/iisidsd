@@ -97,6 +97,8 @@ Operational cautions:
 - modifying deny lists may require administrative privileges
 - confirm the selected IIS site before applying changes
 - deny-list actions are site-specific, not global
+- deny-list changes set `disallowRotationOnConfigChange` on each application pool used by the site's applications so adding, removing, or expiring an IP does not trigger an app-pool rotation
+- this application-pool setting affects all configuration changes and all sites sharing those pools; configuration changes that normally require a recycle may not take effect until a planned recycle
 - current deny-list state is not yet stored as an audit history table in SQLite
 
 ## Tray service operations

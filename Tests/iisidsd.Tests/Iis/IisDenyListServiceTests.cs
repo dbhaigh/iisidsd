@@ -86,7 +86,7 @@ public sealed class IisDenyListServiceTests
             DryRun = false
         });
         var store = new FakeDenyListStore();
-        var writer = new FakeIisDenyListWriter { Status = IisDenyListWriteStatus.AlreadyDenied };
+        var writer = new FakeIisDenyListWriter { Status = IisDenyListMutationStatus.AlreadyDenied };
         var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
 
         var succeeded = service.AddDeniedIp("Example Site", "203.0.113.26", "manual", "manual review");
@@ -109,7 +109,7 @@ public sealed class IisDenyListServiceTests
             DryRun = false
         });
         var store = new FakeDenyListStore();
-        var writer = new FakeIisDenyListWriter { Status = IisDenyListWriteStatus.ExistingAllowRule };
+        var writer = new FakeIisDenyListWriter { Status = IisDenyListMutationStatus.ExistingAllowRule };
         var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
 
         var succeeded = service.AddDeniedIp("Example Site", "203.0.113.27", "manual", "manual review");
@@ -163,35 +163,55 @@ public sealed class IisDenyListServiceTests
     }
 
     [Fact]
-    public void RemoveExpiredDeniedIp_UsesAppCmdAndClearsExpiryAfterSuccess()
+    public void RemoveDeniedIp_UsesWriterAndClearsExpiryAfterSuccess()
     {
         var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
         var store = new FakeDenyListStore();
-        var expiredAt = DateTimeOffset.UtcNow.AddMinutes(-1);
-        store.SetExpiry("Example Site", "203.0.113.24", expiredAt);
-        var appCmd = new FakeAppCmdRunner { Result = (true, string.Empty, string.Empty) };
-        var service = CreateService(options, store, new FakeSiteDiscoveryService(), appCmd);
+        store.SetExpiry("Example Site", "203.0.113.24", DateTimeOffset.UtcNow.AddMinutes(5));
+        var writer = new FakeIisDenyListWriter();
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
 
-        var removed = service.RemoveExpiredDeniedIp(new TemporaryDenyListEntry("Example Site", "203.0.113.24", expiredAt));
+        var removed = service.RemoveDeniedIp("Example Site", "203.0.113.24");
 
         Assert.True(removed);
-        Assert.Equal(
-            ["set", "config", "Example Site", "/section:system.webServer/security/ipSecurity",
-                "/-[ipAddress='203.0.113.24',allowed='false']", "/commit:apphost"],
-            Assert.Single(appCmd.Calls));
+        Assert.Equal(1, writer.RemoveCalls);
+        Assert.False(writer.RemoveDeniedRulesOnly);
         Assert.Null(store.GetExpiry("Example Site", "203.0.113.24"));
         Assert.Equal("succeeded", Assert.Single(store.Audits).Outcome);
     }
 
     [Fact]
-    public void RemoveExpiredDeniedIp_AppCmdExceptionIsAuditedAndReportedAsFailure()
+    public void RemoveExpiredDeniedIp_UsesWriterAndClearsExpiryAfterSuccess()
     {
         var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
         var store = new FakeDenyListStore();
         var expiredAt = DateTimeOffset.UtcNow.AddMinutes(-1);
         store.SetExpiry("Example Site", "203.0.113.24", expiredAt);
-        var appCmd = new FakeAppCmdRunner { ExceptionToThrow = new InvalidOperationException("appcmd start failed") };
-        var service = CreateService(options, store, new FakeSiteDiscoveryService(), appCmd);
+        var writer = new FakeIisDenyListWriter();
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
+
+        var removed = service.RemoveExpiredDeniedIp(new TemporaryDenyListEntry("Example Site", "203.0.113.24", expiredAt));
+
+        Assert.True(removed);
+        Assert.Equal(1, writer.RemoveCalls);
+        Assert.True(writer.RemoveDeniedRulesOnly);
+        Assert.Null(store.GetExpiry("Example Site", "203.0.113.24"));
+        Assert.Equal("succeeded", Assert.Single(store.Audits).Outcome);
+    }
+
+    [Fact]
+    public void RemoveExpiredDeniedIp_WriterFailureIsAuditedAndKeepsExpiry()
+    {
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
+        var store = new FakeDenyListStore();
+        var expiredAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+        store.SetExpiry("Example Site", "203.0.113.24", expiredAt);
+        var writer = new FakeIisDenyListWriter
+        {
+            RemoveStatus = IisDenyListMutationStatus.Failed,
+            RemoveException = new InvalidOperationException("IIS configuration update failed")
+        };
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
 
         var removed = service.RemoveExpiredDeniedIp(new TemporaryDenyListEntry("Example Site", "203.0.113.24", expiredAt));
 
@@ -257,18 +277,29 @@ public sealed class IisDenyListServiceTests
 
     private sealed class FakeIisDenyListWriter : IIisDenyListWriter
     {
-        public IisDenyListWriteStatus Status { get; init; } = IisDenyListWriteStatus.Added;
+        public IisDenyListMutationStatus Status { get; init; } = IisDenyListMutationStatus.Added;
+        public IisDenyListMutationStatus RemoveStatus { get; init; } = IisDenyListMutationStatus.Removed;
+        public Exception? RemoveException { get; init; }
         public int PrepareNewEntryCalls { get; private set; }
+        public int RemoveCalls { get; private set; }
+        public bool RemoveDeniedRulesOnly { get; private set; }
 
-        public IisDenyListWriteResult EnsureDenied(string siteName, string clientIp, Action prepareNewEntry)
+        public IisDenyListMutationResult EnsureDenied(string siteName, string clientIp, Action prepareNewEntry)
         {
-            if (Status == IisDenyListWriteStatus.Added)
+            if (Status == IisDenyListMutationStatus.Added)
             {
                 PrepareNewEntryCalls++;
                 prepareNewEntry();
             }
 
-            return new IisDenyListWriteResult(Status);
+            return new IisDenyListMutationResult(Status);
+        }
+
+        public IisDenyListMutationResult RemoveDenied(string siteName, string clientIp, bool deniedRulesOnly = false)
+        {
+            RemoveCalls++;
+            RemoveDeniedRulesOnly = deniedRulesOnly;
+            return new IisDenyListMutationResult(RemoveStatus, RemoveException);
         }
     }
 

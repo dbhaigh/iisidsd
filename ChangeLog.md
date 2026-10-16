@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.2.3 - 2026-10-16
+
+### Fixed
+- Adding, removing, and expiring IIS deny-list entries now suppresses configuration-change rotations for the affected application pools.
+
 ## 0.2.2 - 2026-10-14
 
 ### Added

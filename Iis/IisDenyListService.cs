@@ -4,7 +4,6 @@ using iisidsd.Configuration;
 using iisidsd.Models;
 using iisidsd.Storage;
 using Microsoft.Extensions.Options;
-using Microsoft.Web.Administration;
 
 namespace iisidsd.Iis;
 
@@ -121,7 +120,7 @@ public sealed class IisDenyListService : IIisDenyListService
 
             DateTimeOffset? previousExpiry = null;
             var previousExpiryRead = false;
-            IisDenyListWriteResult writeResult;
+            IisDenyListMutationResult writeResult;
             try
             {
                 previousExpiry = _denyListStore.GetExpiry(siteName, clientIp);
@@ -148,11 +147,11 @@ public sealed class IisDenyListService : IIisDenyListService
 
             switch (writeResult.Status)
             {
-                case IisDenyListWriteStatus.Added:
+                case IisDenyListMutationStatus.Added:
                     CompleteAudit(auditId, "succeeded");
                     LogDenyAction("add", "succeeded", clientIp, siteName, reason, securityEvent, domain, expiresAt);
                     return true;
-                case IisDenyListWriteStatus.AlreadyDenied:
+                case IisDenyListMutationStatus.AlreadyDenied:
                     var existingExpiry = previousExpiry is null ? null : expiresAt;
                     if (previousExpiry is not null)
                     {
@@ -166,7 +165,7 @@ public sealed class IisDenyListService : IIisDenyListService
                     CompleteAudit(auditId, alreadyDeniedOutcome);
                     LogDenyAction("add", alreadyDeniedOutcome, clientIp, siteName, reason, securityEvent, domain, existingExpiry);
                     return true;
-                case IisDenyListWriteStatus.ExistingAllowRule:
+                case IisDenyListMutationStatus.ExistingAllowRule:
                     _denyListStore.RemoveExpiry(siteName, clientIp);
                     _denyListStore.SetAuditExpiry(auditId, null);
                     CompleteAudit(auditId, "existing-allow-rule");
@@ -307,25 +306,7 @@ public sealed class IisDenyListService : IIisDenyListService
                 return false;
             }
 
-            (bool Success, string Output, string Error) result;
-            try
-            {
-                result = _appCmd.Run(
-                    "set",
-                    "config",
-                    entry.SiteName,
-                    "/section:system.webServer/security/ipSecurity",
-                    $"/-[ipAddress='{entry.ClientIp}',allowed='false']",
-                    "/commit:apphost");
-            }
-            catch (Exception exception)
-            {
-                CompleteAudit(auditId, "failed");
-                LogDenyAction("expire", "failed", entry.ClientIp, entry.SiteName, ExpiryCleanupReason, securityEvent: null, expiresAt: entry.ExpiresAt, exception: exception);
-                return false;
-            }
-
-            if (!result.Success)
+            if (!RemoveDeniedIpFromIis(entry.SiteName, entry.ClientIp, ExpiryCleanupReason, deniedRulesOnly: true))
             {
                 CompleteAudit(auditId, "failed");
                 LogDenyAction("expire", "failed", entry.ClientIp, entry.SiteName, ExpiryCleanupReason, securityEvent: null, expiresAt: entry.ExpiresAt);
@@ -465,23 +446,23 @@ public sealed class IisDenyListService : IIisDenyListService
         string clientIp,
         string reason,
         SecurityEvent? securityEvent = null,
-        string? domain = null)
+        string? domain = null,
+        bool deniedRulesOnly = false)
     {
         try
         {
-            using var manager = new ServerManager();
-            var section = manager.GetApplicationHostConfiguration().GetSection("system.webServer/security/ipSecurity", siteName);
-            var collection = section.GetCollection();
-            var entry = collection.Cast<ConfigurationElement>().FirstOrDefault(element =>
-                string.Equals((string?)element["ipAddress"], clientIp, StringComparison.OrdinalIgnoreCase));
-            if (entry is null)
+            var result = _iisDenyListWriter.RemoveDenied(siteName, clientIp, deniedRulesOnly);
+            if (result.Status == IisDenyListMutationStatus.Failed)
             {
-                return true;
+                if (result.Exception is { } exception)
+                {
+                    LogMutationFailure(exception, "remove", clientIp, siteName, reason, securityEvent, domain);
+                }
+
+                return false;
             }
 
-            collection.Remove(entry);
-            manager.CommitChanges();
-            return true;
+            return result.Status is IisDenyListMutationStatus.Removed or IisDenyListMutationStatus.NotFound;
         }
         catch (Exception ex)
         {
@@ -490,7 +471,7 @@ public sealed class IisDenyListService : IIisDenyListService
         }
     }
 
-    private IisDenyListWriteResult WriteDeniedIp(
+    private IisDenyListMutationResult WriteDeniedIp(
         string siteName,
         string clientIp,
         string reason,
@@ -499,7 +480,7 @@ public sealed class IisDenyListService : IIisDenyListService
         Action prepareNewEntry)
     {
         var result = _iisDenyListWriter.EnsureDenied(siteName, clientIp, prepareNewEntry);
-        if (result.Status == IisDenyListWriteStatus.Failed && result.Exception is { } exception)
+        if (result.Status == IisDenyListMutationStatus.Failed && result.Exception is { } exception)
         {
             LogMutationFailure(exception, "add", clientIp, siteName, reason, securityEvent, domain);
         }

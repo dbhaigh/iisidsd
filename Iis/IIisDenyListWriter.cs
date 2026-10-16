@@ -2,15 +2,18 @@ namespace iisidsd.Iis;
 
 public interface IIisDenyListWriter
 {
-    IisDenyListWriteResult EnsureDenied(string siteName, string clientIp, Action prepareNewEntry);
+    IisDenyListMutationResult EnsureDenied(string siteName, string clientIp, Action prepareNewEntry);
+    IisDenyListMutationResult RemoveDenied(string siteName, string clientIp, bool deniedRulesOnly = false);
 }
 
-public enum IisDenyListWriteStatus
+public enum IisDenyListMutationStatus
 {
     Added,
     AlreadyDenied,
     ExistingAllowRule,
+    Removed,
+    NotFound,
     Failed
 }
 
-public sealed record IisDenyListWriteResult(IisDenyListWriteStatus Status, Exception? Exception = null);
+public sealed record IisDenyListMutationResult(IisDenyListMutationStatus Status, Exception? Exception = null);

@@ -14,6 +14,10 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls
 
+## Release 0.2.3 highlights
+
+- Adding, removing, and expiring IIS deny-list entries no longer triggers configuration-change rotations for the affected application pools. This pool-wide setting also applies to other configuration changes and sites sharing those pools.
+
 ## Release 0.2.2 highlights
 
 - Windows service and single-file launches serve the dashboard and assets from beside the executable and honor the configured `Urls` listener address.
@@ -238,7 +242,7 @@ Publish the self-contained standalone Windows x64 release with:
 
 - `dotnet publish iisidsd.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishProfile=StandaloneWinX64`
 
-The standalone package is written under `artifacts/iisidsd-0.2.2-standalone-win-x64` and includes only the executable, `appsettings.json`, and required dashboard assets. Runtime SQLite data is created beside the executable on first launch.
+The standalone package is written under `artifacts/iisidsd-0.2.3-standalone-win-x64` and includes only the executable, `appsettings.json`, and required dashboard assets. Runtime SQLite data is created beside the executable on first launch.
 
 Publish framework-dependent Windows x64 binaries with:
 
