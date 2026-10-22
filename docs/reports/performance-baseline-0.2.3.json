@@ -1,0 +1,187 @@
+{
+  "generatedAtUtc": "2026-10-22T19:13:15.9785086+00:00",
+  "applicationVersion": "0.2.3\u002Bd94bee47178b0f2ae22233ee25d465344fff90bc",
+  "sourceRevision": "d94bee4",
+  "workingTreeDirty": true,
+  "environment": {
+    "machineName": "AHDEV01",
+    "processorIdentifier": "AMD64 Family 26 Model 36 Stepping 0, AuthenticAMD",
+    "logicalProcessorCount": 24,
+    "availableMemoryBytes": 100521586688,
+    "operatingSystem": "Microsoft Windows 10.0.26300",
+    "processArchitecture": "X64",
+    "runtime": ".NET 10.0.13",
+    "dotnetVersion": "10.0.13"
+  },
+  "configuration": {
+    "seed": 424242,
+    "requestedEvents": 50000,
+    "siteCount": 32,
+    "clientIpCardinality": 26243,
+    "pathCardinality": 16736,
+    "sustainedQueueCapacity": 10000,
+    "saturationQueueCapacity": 256,
+    "saturationBatchSize": 16,
+    "sustainedRateEventsPerSecond": 1000,
+    "burstSize": 500,
+    "batchSize": 64,
+    "journalMode": "WAL",
+    "synchronousMode": "FULL",
+    "busyTimeoutSeconds": 2,
+    "eventRetentionLimit": 62000
+  },
+  "dataset": {
+    "eventCount": 50000,
+    "uniqueClientIps": 26243,
+    "uniquePaths": 16736,
+    "uniqueDomains": 32,
+    "repeated404Requests": 5000,
+    "repeated404Detected": 4999
+  },
+  "sustainedIngestion": {
+    "receivedEvents": 50000,
+    "acceptedEvents": 50000,
+    "processedEvents": 50000,
+    "droppedEvents": 0,
+    "lostEvents": 0,
+    "queueHighWaterMark": 135,
+    "durationSeconds": 54.4690314,
+    "eventsPerSecond": 917.9528020760803,
+    "endToEndLatency": {
+      "sampleCount": 50000,
+      "p50Milliseconds": 39.8315,
+      "p95Milliseconds": 85.6971,
+      "p99Milliseconds": 101.5331
+    },
+    "repeated404Detections": 4999,
+    "resources": {
+      "cpuSeconds": 25.703125,
+      "cpuPercentOfOneCore": 47.1885112317235,
+      "allocatedBytesBefore": 19023024,
+      "managedAllocatedBytes": 1056449896,
+      "workingSetBeforeBytes": 59170816,
+      "workingSetAfterBytes": 88236032,
+      "peakWorkingSetBytes": 138006528
+    }
+  },
+  "burstIngestion": {
+    "receivedEvents": 10000,
+    "acceptedEvents": 10000,
+    "processedEvents": 10000,
+    "droppedEvents": 0,
+    "lostEvents": 0,
+    "queueHighWaterMark": 6115,
+    "durationSeconds": 6.3905633,
+    "eventsPerSecond": 1564.8072838899818,
+    "endToEndLatency": {
+      "sampleCount": 10000,
+      "p50Milliseconds": 1785.5823,
+      "p95Milliseconds": 4038.8372,
+      "p99Milliseconds": 4229.756
+    },
+    "repeated404Detections": 998,
+    "resources": null
+  },
+  "resources": {
+    "cpuSeconds": 25.703125,
+    "cpuPercentOfOneCore": 47.1885112317235,
+    "allocatedBytesBefore": 19023024,
+    "managedAllocatedBytes": 1056449896,
+    "workingSetBeforeBytes": 59170816,
+    "workingSetAfterBytes": 88236032,
+    "peakWorkingSetBytes": 138006528
+  },
+  "database": {
+    "initialBytes": 172856,
+    "afterSustainedIngestionBytes": 61565880,
+    "finalBytes": 66146304,
+    "growthBytes": 61393024,
+    "growthBytesPerEvent": 1227.86048,
+    "growthBytesPerSecond": 1127117.9681744808,
+    "retainedEvents": 60514
+  },
+  "dashboard": {
+    "concurrentQueries": {
+      "requestCount": 200,
+      "durationSeconds": 0.2077886,
+      "requestsPerSecond": 962.5167116964069,
+      "latency": {
+        "sampleCount": 200,
+        "p50Milliseconds": 2.5084,
+        "p95Milliseconds": 17.7277,
+        "p99Milliseconds": 114.1713
+      },
+      "responseBytes": 0,
+      "latencyMilliseconds": 17.7277
+    },
+    "eventJsonExport": {
+      "requestCount": 1,
+      "durationSeconds": 0.099586,
+      "requestsPerSecond": 10.041572108529312,
+      "latency": {
+        "sampleCount": 1,
+        "p50Milliseconds": 99.586,
+        "p95Milliseconds": 99.586,
+        "p99Milliseconds": 99.586
+      },
+      "responseBytes": 2945646,
+      "latencyMilliseconds": 99.586
+    },
+    "eventCsvExport": {
+      "requestCount": 1,
+      "durationSeconds": 0.0694904,
+      "requestsPerSecond": 14.390476957968296,
+      "latency": {
+        "sampleCount": 1,
+        "p50Milliseconds": 69.4904,
+        "p95Milliseconds": 69.4904,
+        "p99Milliseconds": 69.4904
+      },
+      "responseBytes": 2258521,
+      "latencyMilliseconds": 69.4904
+    },
+    "findingsExport": {
+      "requestCount": 1,
+      "durationSeconds": 0.0392536,
+      "requestsPerSecond": 25.475370411885788,
+      "latency": {
+        "sampleCount": 1,
+        "p50Milliseconds": 39.2536,
+        "p95Milliseconds": 39.2536,
+        "p99Milliseconds": 39.2536
+      },
+      "responseBytes": 22475,
+      "latencyMilliseconds": 39.2536
+    },
+    "sseClientCount": 8,
+    "sseDeliveryLatency": {
+      "sampleCount": 8,
+      "p50Milliseconds": 16.0289,
+      "p95Milliseconds": 16.0439,
+      "p99Milliseconds": 16.0439
+    }
+  },
+  "queueSaturation": {
+    "receivedEvents": 4000,
+    "acceptedEvents": 257,
+    "processedEvents": 257,
+    "droppedEvents": 3743,
+    "queueHighWaterMark": 256,
+    "durationSeconds": 0.1309959,
+    "recoveryMilliseconds": 127.1856
+  },
+  "sqliteContention": {
+    "lockHoldMilliseconds": 250,
+    "receivedEvents": 256,
+    "processedEvents": 256,
+    "droppedEvents": 0,
+    "recoveryMilliseconds": 140.5593,
+    "batchWriteLatency": {
+      "sampleCount": 5,
+      "p50Milliseconds": 18.1225,
+      "p95Milliseconds": 269.1242,
+      "p99Milliseconds": 269.1242
+    }
+  },
+  "comparison": null
+}

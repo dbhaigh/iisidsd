@@ -12,10 +12,58 @@ public sealed class OptionsValidationTests
     [
         ["IisEtw:SubscriptionBufferSize", "0"],
         ["Detection:StatusScoreWeight", "-1"],
+        ["Detection:NotFoundBurstWindowSeconds", "0"],
+        ["Detection:NotFoundBurstThreshold", "1"],
+        ["Detection:AuthenticationFailureThreshold", "1"],
+        ["Detection:AuthenticationFailureWindowSeconds", "0"],
+        ["Detection:RateWindowSeconds", "301"],
+        ["Detection:MaximumTrackedClientHistories", "0"],
+        ["Detection:MaximumTrackedHistoryBuckets", "262145"],
+        ["Detection:MaximumTrackedPathsPerHistory", "1025"],
+        ["Detection:MaximumTrackedPathsTotal", "131073"],
+        ["Detection:MaximumTrackedPathLengthCharacters", "63"],
+        ["Detection:MaximumTrackedExtensionSites", "2049"],
+        ["Detection:MaximumExtensionsPerSite", "257"],
+        ["Detection:MaximumEventLatenessSeconds", "31"],
+        ["TrustedProxies:Enabled", "true"],
+        ["TrustedProxies:ForwardLimit", "11"],
+        ["TrustedProxies:TrustedProxyIps:0", "127.0.0.1/8"],
+        ["Dashboard:AllowedHosts:0", "*"],
+        ["Dashboard:AllowedHosts:0", "dashboard.example:443"],
         ["Tray:BrowserUrl", "file:///C:/invalid"],
         ["Storage:EventRetentionDays", "0"],
-        ["IisAdmin:AllowList:0", "invalid-address"]
+        ["IisAdmin:AllowList:0", "invalid-address"],
+        ["IisAdmin:EnforcementMode", "enabled"],
+        ["IisAdmin:EnforcementMode", "1"],
+        ["IisAdmin:EnforcementMode", "99"]
     ];
+
+    [Theory]
+    [InlineData(false, false, null, DenyListEnforcementMode.Observe, false)]
+    [InlineData(true, true, null, DenyListEnforcementMode.Simulate, false)]
+    [InlineData(true, false, null, DenyListEnforcementMode.Enforce, true)]
+    [InlineData(true, false, "Observe", DenyListEnforcementMode.Observe, false)]
+    [InlineData(true, false, "Simulate", DenyListEnforcementMode.Simulate, false)]
+    [InlineData(true, false, "Enforce", DenyListEnforcementMode.Enforce, true)]
+    [InlineData(false, false, "Enforce", DenyListEnforcementMode.Observe, false)]
+    [InlineData(true, true, "Enforce", DenyListEnforcementMode.Simulate, false)]
+    public void EnforcementPolicy_PreservesLegacySafetySettings(
+        bool enabled,
+        bool dryRun,
+        string? explicitMode,
+        DenyListEnforcementMode expectedMode,
+        bool expectedCanMutate)
+    {
+        var policy = new IisAdminOptions
+        {
+            EnableDenyListChanges = enabled,
+            DryRun = dryRun,
+            EnforcementMode = explicitMode
+        }.GetEnforcementPolicy();
+
+        Assert.Equal(expectedMode, policy.Mode);
+        Assert.Equal(expectedCanMutate, policy.CanMutate);
+    }
 
     [Theory]
     [MemberData(nameof(InvalidSettings))]

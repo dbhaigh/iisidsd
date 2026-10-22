@@ -245,7 +245,7 @@ public sealed class IisAutoDenyServiceTests
 
         service.Apply(securityEvent);
 
-        Assert.Empty(denyListService.Requests);
+        Assert.Single(denyListService.Requests);
         Assert.Empty(banCountService.IncrementRequests);
     }
 
@@ -286,6 +286,7 @@ public sealed class IisAutoDenyServiceTests
         public List<(string ClientIp, IReadOnlyList<string> Domains, string Actor, string Reason)> Requests { get; } = [];
 
         public IReadOnlyList<string> GetDeniedIps(string siteName) => [];
+        public DenyListPreview? PreviewDeniedIp(DenyListPreviewRequest request, string actor = "manual") => null;
 
         public bool AddDeniedIp(
             string siteName,
@@ -309,6 +310,7 @@ public sealed class IisAutoDenyServiceTests
         public bool RemoveDeniedIp(string siteName, string clientIp, string actor = "manual", string reason = "Manual deny-list removal") => true;
 
         public bool RemoveExpiredDeniedIp(TemporaryDenyListEntry entry) => true;
+        public void ReconcilePendingManagedDenies() { }
     }
 
     private sealed class FakeBanCountService : IBanCountService

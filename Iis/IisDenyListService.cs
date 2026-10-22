@@ -1,4 +1,4 @@
-using System.Net;
+using System.Runtime.InteropServices;
 using System.Xml.Linq;
 using iisidsd.Configuration;
 using iisidsd.Models;
@@ -68,7 +68,8 @@ public sealed class IisDenyListService : IIisDenyListService
 
     public IReadOnlyList<string> GetDeniedIps(string siteName)
     {
-        if (string.IsNullOrWhiteSpace(siteName))
+        if (!IisDenyListWriter.IsValidSiteName(siteName) ||
+            !_siteDiscoveryService.GetSites().Any(site => string.Equals(site.Name, siteName, StringComparison.OrdinalIgnoreCase)))
         {
             return [];
         }
@@ -89,6 +90,136 @@ public sealed class IisDenyListService : IIisDenyListService
             .ToArray();
     }
 
+    public DenyListPreview? PreviewDeniedIp(DenyListPreviewRequest request, string actor = "manual")
+    {
+        if (request is null ||
+            !IisDenyListWriter.IsValidSiteName(request.SiteName) ||
+            !IisIpAllowList.TryNormalizeAddress(request.ClientIp, out var normalizedIp) ||
+            request.Evidence is { Count: > 32 } ||
+            request.Evidence?.Any(value => value is null || value.Length > 512 || value.Any(char.IsControl)) == true ||
+            request.Reason?.Length > 512 || request.Reason?.Any(char.IsControl) == true)
+        {
+            return null;
+        }
+
+        lock (_mutationSync)
+        {
+            using var mutationLock = _denyListStore.AcquireMutationLock();
+            var policy = _adminOptions.GetEnforcementPolicy();
+            var inspection = _iisDenyListWriter.Inspect(request.SiteName, normalizedIp);
+            var managedEntry = _denyListStore.GetManagedDeny(request.SiteName, normalizedIp);
+            var allowListed = _ipAllowList.Contains(normalizedIp);
+            var ruleState = inspection.RuleState switch
+            {
+                "denied" when managedEntry is { State: "active" } => "service-managed-deny",
+                "denied" => "pre-existing-unmanaged-deny",
+                "allow" => "administrator-allow-rule",
+                _ => "missing"
+            };
+            var evidence = (request.Evidence ?? [])
+                .Append(string.IsNullOrWhiteSpace(request.Reason) ? null : request.Reason.Trim())
+                .Where(static item => !string.IsNullOrWhiteSpace(item))
+                .Select(static item => item!)
+                .Distinct(StringComparer.Ordinal)
+                .Take(32)
+                .ToArray();
+            var warnings = new List<string>();
+            if (allowListed)
+            {
+                warnings.Add("The address matches the configured allow-list and cannot be denied.");
+            }
+
+            if (ruleState == "pre-existing-unmanaged-deny")
+            {
+                warnings.Add("The existing deny rule is not recorded as service-owned and will not be adopted or removed.");
+            }
+
+            if (inspection.OtherSitesSharingPools.Count > 0)
+            {
+                warnings.Add("The target site's application pools are shared with other sites; IIS configuration changes may recycle those pools.");
+            }
+
+            var expiresAt = GetExpiryTime();
+            RecordAction(actor, "preview", request.SiteName, normalizedIp, request.Reason ?? "Deny-list preview", "requested", policy, expiresAt);
+            return new DenyListPreview(
+                inspection.SiteName,
+                normalizedIp,
+                $"ipAddress={normalizedIp}; allowed=false",
+                expiresAt,
+                policy.Mode.ToString(),
+                allowListed,
+                policy.CanMutate && !allowListed && ruleState == "missing",
+                ruleState,
+                evidence,
+                inspection.ApplicationPools,
+                inspection.OtherSitesSharingPools,
+                warnings);
+        }
+    }
+
+    public void ReconcilePendingManagedDenies()
+    {
+        if (!_adminOptions.GetEnforcementPolicy().CanMutate)
+        {
+            return;
+        }
+
+        lock (_mutationSync)
+        {
+            using var mutationLock = _denyListStore.AcquireMutationLock();
+            foreach (var entry in _denyListStore.GetPendingManagedDenies(250))
+            {
+                IisDenyListInspection inspection;
+                try
+                {
+                    inspection = _iisDenyListWriter.Inspect(entry.SiteName, entry.ClientIp);
+                }
+                catch (Exception exception)
+                {
+                    RecordAction("system:recovery", "recover", entry.SiteName, entry.ClientIp,
+                        "Reconcile pending IIS mutation", "failed", _adminOptions.GetEnforcementPolicy(), entry.ExpiresAt);
+                    _logger.LogWarning(exception, "Unable to inspect pending deny-list operation {AuditId} for recovery.", entry.AuditId);
+                    continue;
+                }
+
+                if (string.Equals(entry.State, "pending-remove", StringComparison.Ordinal))
+                {
+                    if (inspection.RuleState == "missing")
+                    {
+                        _denyListStore.TryRemoveManagedDeny(entry.SiteName, entry.ClientIp, entry.State, entry.AuditId);
+                        RecordAction("system:recovery", "recover", entry.SiteName, entry.ClientIp,
+                            "Reconciled completed deny-list removal", "reverted", _adminOptions.GetEnforcementPolicy(), entry.ExpiresAt);
+                    }
+                    else if (inspection.RuleState == "denied")
+                    {
+                        _denyListStore.CompleteManagedDeny(entry.SiteName, entry.ClientIp, entry.ExpiresAt, entry.AuditId);
+                        RecordAction("system:recovery", "recover", entry.SiteName, entry.ClientIp,
+                            "Restored ownership after unapplied removal", "failed", _adminOptions.GetEnforcementPolicy(), entry.ExpiresAt);
+                    }
+                    else
+                    {
+                        _denyListStore.TryRemoveManagedDeny(entry.SiteName, entry.ClientIp, entry.State, entry.AuditId);
+                        RecordAction("system:recovery", "recover", entry.SiteName, entry.ClientIp,
+                            "Preserved administrator allow rule", "reverted", _adminOptions.GetEnforcementPolicy(), entry.ExpiresAt);
+                    }
+                }
+                else if (inspection.RuleState == "missing" || inspection.RuleState == "allow")
+                {
+                    _denyListStore.TryRemoveManagedDeny(entry.SiteName, entry.ClientIp, entry.State, entry.AuditId);
+                    RecordAction("system:recovery", "recover", entry.SiteName, entry.ClientIp,
+                        "Reverted unapplied or superseded deny-list addition", "reverted", _adminOptions.GetEnforcementPolicy(), entry.ExpiresAt);
+                }
+                else
+                {
+                    _denyListStore.TryTransitionManagedDeny(
+                        entry.SiteName, entry.ClientIp, entry.State, entry.AuditId, "recovery-required", entry.AuditId);
+                    RecordAction("system:recovery", "recover", entry.SiteName, entry.ClientIp,
+                        "Ambiguous deny rule preserved for administrator review", "recovery-required", _adminOptions.GetEnforcementPolicy(), entry.ExpiresAt);
+                }
+            }
+        }
+    }
+
     public bool AddDeniedIp(
         string siteName,
         string clientIp,
@@ -97,84 +228,123 @@ public sealed class IisDenyListService : IIisDenyListService
         SecurityEvent? securityEvent = null,
         string? domain = null)
     {
-        if (!CanMutate() || string.IsNullOrWhiteSpace(siteName) || !IPAddress.TryParse(clientIp, out _))
-        {
-            return false;
-        }
-
-        if (IsAllowListed(clientIp, actor, "add", siteName, reason, securityEvent, domain))
+        if (!IisDenyListWriter.IsValidSiteName(siteName) ||
+            !IisIpAllowList.TryNormalizeAddress(clientIp, out var normalizedIp))
         {
             return false;
         }
 
         lock (_mutationSync)
         {
+            using var mutationLock = _denyListStore.AcquireMutationLock();
+            var policy = _adminOptions.GetEnforcementPolicy();
             var expiresAt = GetExpiryTime();
-            var auditId = BeginAudit(actor, "add", siteName, clientIp, reason, expiresAt);
-            if (_adminOptions.DryRun)
+            RecordAction(actor, "add", siteName, normalizedIp, reason, "requested", policy, expiresAt);
+
+            if (IsAllowListed(normalizedIp, actor, "add", siteName, reason, policy, securityEvent, domain))
             {
-                CompleteAudit(auditId, "dry-run");
-                LogDenyAction("add", "dry-run", clientIp, siteName, reason, securityEvent, domain, expiresAt);
+                return false;
+            }
+
+            if (!policy.WritesEnabled || policy.Mode == DenyListEnforcementMode.Observe)
+            {
+                RecordAction(actor, "add", siteName, normalizedIp, reason, "observed", policy, expiresAt);
+                return false;
+            }
+
+            if (policy.IsSimulation)
+            {
+                RecordAction(actor, "add", siteName, normalizedIp, reason, "simulated", policy, expiresAt);
+                LogDenyAction("add", "simulated", normalizedIp, siteName, reason, securityEvent, domain, expiresAt);
                 return true;
             }
 
-            DateTimeOffset? previousExpiry = null;
-            var previousExpiryRead = false;
+            var managedEntry = _denyListStore.GetManagedDeny(siteName, normalizedIp);
+            if (managedEntry is not null && !string.Equals(managedEntry.State, "active", StringComparison.Ordinal))
+            {
+                RecordAction(actor, "add", siteName, normalizedIp, reason, "recovery-required", policy, expiresAt);
+                return false;
+            }
+
+            var auditId = RecordAction(actor, "add", siteName, normalizedIp, reason, "attempted", policy, expiresAt);
             IisDenyListMutationResult writeResult;
             try
             {
-                previousExpiry = _denyListStore.GetExpiry(siteName, clientIp);
-                previousExpiryRead = true;
-                writeResult = WriteDeniedIp(
+                writeResult = RetryIisMutation(() => _iisDenyListWriter.EnsureDenied(
                     siteName,
-                    clientIp,
-                    reason,
-                    securityEvent,
-                    domain,
-                    () => SetExpiry(siteName, clientIp, expiresAt));
+                    normalizedIp,
+                    () =>
+                    {
+                        if (managedEntry is null)
+                        {
+                            var pendingEntry = new ManagedDenyListEntry(siteName, normalizedIp, expiresAt, "pending-add", auditId);
+                            if (!_denyListStore.TryPrepareManagedDeny(pendingEntry))
+                            {
+                                var concurrentEntry = _denyListStore.GetManagedDeny(siteName, normalizedIp);
+                                if (concurrentEntry is null || concurrentEntry.State != "pending-add" || concurrentEntry.AuditId != auditId)
+                                {
+                                    throw new InvalidOperationException("A concurrent deny-list operation already owns this site/address.");
+                                }
+                            }
+                        }
+                        else
+                        {
+                            if (!_denyListStore.TryTransitionManagedDeny(
+                                    siteName, normalizedIp, "active", managedEntry.AuditId, "pending-add", auditId))
+                            {
+                                var concurrentEntry = _denyListStore.GetManagedDeny(siteName, normalizedIp);
+                                if (concurrentEntry is null || concurrentEntry.State != "pending-add" || concurrentEntry.AuditId != auditId)
+                                {
+                                    throw new InvalidOperationException("A concurrent deny-list operation changed ownership state.");
+                                }
+                            }
+                        }
+                    }));
             }
             catch (Exception exception)
             {
-                if (previousExpiryRead)
-                {
-                    RestoreExpiry(siteName, clientIp, previousExpiry);
-                }
-
-                CompleteAudit(auditId, "failed");
-                LogDenyAction("add", "failed", clientIp, siteName, reason, securityEvent, domain, expiresAt, exception);
-                throw;
+                RecordAction(actor, "add", siteName, normalizedIp, reason, "failed", policy, expiresAt);
+                LogDenyAction("add", "failed", normalizedIp, siteName, reason, securityEvent, domain, expiresAt, exception);
+                return false;
             }
 
             switch (writeResult.Status)
             {
                 case IisDenyListMutationStatus.Added:
-                    CompleteAudit(auditId, "succeeded");
-                    LogDenyAction("add", "succeeded", clientIp, siteName, reason, securityEvent, domain, expiresAt);
-                    return true;
-                case IisDenyListMutationStatus.AlreadyDenied:
-                    var existingExpiry = previousExpiry is null ? null : expiresAt;
-                    if (previousExpiry is not null)
+                    try
                     {
-                        SetExpiry(siteName, clientIp, existingExpiry);
+                        if (!_denyListStore.CompleteManagedDeny(siteName, normalizedIp, expiresAt, auditId))
+                        {
+                            throw new InvalidOperationException("The managed deny-list ownership state changed during commit.");
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        RecordAction(actor, "add", siteName, normalizedIp, reason, "recovery-required", policy, expiresAt);
+                        LogDenyAction("add", "failed", normalizedIp, siteName, reason, securityEvent, domain, expiresAt, exception);
+                        return false;
                     }
 
-                    _denyListStore.SetAuditExpiry(auditId, existingExpiry);
-                    var alreadyDeniedOutcome = existingExpiry is null
-                        ? "already-denied-permanent"
-                        : "already-denied-temporary";
-                    CompleteAudit(auditId, alreadyDeniedOutcome);
-                    LogDenyAction("add", alreadyDeniedOutcome, clientIp, siteName, reason, securityEvent, domain, existingExpiry);
+                    RecordAction(actor, "add", siteName, normalizedIp, reason, "succeeded", policy, expiresAt);
+                    LogDenyAction("add", "succeeded", normalizedIp, siteName, reason, securityEvent, domain, expiresAt);
                     return true;
+                case IisDenyListMutationStatus.AlreadyDenied:
+                    var alreadyDeniedOutcome = managedEntry is null ? "pre-existing-unmanaged" : "already-managed";
+                    RecordAction(actor, "add", siteName, normalizedIp, reason, alreadyDeniedOutcome, policy, managedEntry?.ExpiresAt);
+                    LogDenyAction("add", alreadyDeniedOutcome, normalizedIp, siteName, reason, securityEvent, domain, managedEntry?.ExpiresAt);
+                    return false;
                 case IisDenyListMutationStatus.ExistingAllowRule:
-                    _denyListStore.RemoveExpiry(siteName, clientIp);
-                    _denyListStore.SetAuditExpiry(auditId, null);
-                    CompleteAudit(auditId, "existing-allow-rule");
-                    LogDenyAction("add", "existing-allow-rule", clientIp, siteName, reason, securityEvent, domain);
+                    if (managedEntry is not null)
+                    {
+                        _denyListStore.TryRemoveManagedDeny(siteName, normalizedIp, managedEntry.State, managedEntry.AuditId);
+                    }
+
+                    RecordAction(actor, "add", siteName, normalizedIp, reason, "existing-allow-rule", policy);
+                    LogDenyAction("add", "existing-allow-rule", normalizedIp, siteName, reason, securityEvent, domain);
                     return false;
                 default:
-                    RestoreExpiry(siteName, clientIp, previousExpiry);
-                    CompleteAudit(auditId, "failed");
-                    LogDenyAction("add", "failed", clientIp, siteName, reason, securityEvent, domain, expiresAt, writeResult.Exception);
+                    RecordAction(actor, "add", siteName, normalizedIp, reason, "failed", policy, expiresAt);
+                    LogDenyAction("add", "failed", normalizedIp, siteName, reason, securityEvent, domain, expiresAt, writeResult.Exception);
                     return false;
             }
         }
@@ -187,61 +357,75 @@ public sealed class IisDenyListService : IIisDenyListService
         string reason = "Manual deny-list request",
         SecurityEvent? securityEvent = null)
     {
-        if (!CanMutate() || !IPAddress.TryParse(clientIp, out _))
+        if (!IisIpAllowList.TryNormalizeAddress(clientIp, out var normalizedIp))
         {
             return [];
         }
 
-        if (IsAllowListed(clientIp, actor, "add", "*", reason, securityEvent))
+        lock (_mutationSync)
         {
-            return [];
-        }
+            using var mutationLock = _denyListStore.AcquireMutationLock();
+            var policy = _adminOptions.GetEnforcementPolicy();
+            var targetDomains = (domains ?? [])
+                .Where(static domain => !string.IsNullOrWhiteSpace(domain) && domain.Length <= 253 && !domain.Any(char.IsControl))
+                .Select(IisSiteDiscoveryService.NormalizeDomain)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(64)
+                .ToArray();
+            RecordAction(actor, "add", "*", normalizedIp, reason, "requested", policy, GetExpiryTime());
 
-        var targetDomains = (domains ?? [])
-            .Where(static domain => !string.IsNullOrWhiteSpace(domain))
-            .Select(NormalizeDomain)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        if (targetDomains.Length == 0)
-        {
-            RecordCompletedAudit(actor, "add", "*", clientIp, reason, _adminOptions.DryRun, "no-target-domains", GetExpiryTime());
-            LogDenyAction("add", "no-target-domains", clientIp, "*", reason, securityEvent);
-            return [];
-        }
-
-        if (_adminOptions.DryRun)
-        {
-            var dryRunReason = $"{reason}; target domains: {string.Join(", ", targetDomains)}";
-            RecordCompletedAudit(actor, "add", "*", clientIp, dryRunReason, dryRun: true, "dry-run", GetExpiryTime());
-            LogDenyAction("add", "dry-run", clientIp, "*", reason, securityEvent, string.Join(", ", targetDomains), GetExpiryTime());
-            return [];
-        }
-
-        var targetSites = _siteDiscoveryService.GetSites()
-            .Where(site => site.Domains.Any(siteDomain => targetDomains.Any(targetDomain =>
-                string.Equals(NormalizeDomain(siteDomain), targetDomain, StringComparison.OrdinalIgnoreCase))))
-            .Select(site => site.Name)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Order(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        if (targetSites.Length == 0)
-        {
-            RecordCompletedAudit(actor, "add", "*", clientIp, reason, _adminOptions.DryRun, "no-matching-sites", GetExpiryTime());
-            LogDenyAction("add", "no-matching-sites", clientIp, "*", reason, securityEvent, string.Join(", ", targetDomains));
-            return [];
-        }
-
-        var updatedSites = new List<string>(targetSites.Length);
-        foreach (var siteName in targetSites)
-        {
-            if (AddDeniedIp(siteName, clientIp, actor, reason, securityEvent, string.Join(", ", targetDomains)))
+            if (IsAllowListed(normalizedIp, actor, "add", "*", reason, policy, securityEvent, string.Join(", ", targetDomains)))
             {
-                updatedSites.Add(siteName);
+                return [];
             }
-        }
 
-        return updatedSites;
+            if (!policy.WritesEnabled || policy.Mode == DenyListEnforcementMode.Observe)
+            {
+                RecordAction(actor, "add", "*", normalizedIp, reason, "observed", policy, GetExpiryTime());
+                return [];
+            }
+
+            if (policy.IsSimulation)
+            {
+                RecordAction(actor, "add", "*", normalizedIp,
+                    $"{reason}; target domains: {string.Join(", ", targetDomains)}", "simulated", policy, GetExpiryTime());
+                LogDenyAction("add", "simulated", normalizedIp, "*", reason, securityEvent, string.Join(", ", targetDomains), GetExpiryTime());
+                return [];
+            }
+
+            if (targetDomains.Length == 0)
+            {
+                RecordAction(actor, "add", "*", normalizedIp, reason, "no-target-domains", policy, GetExpiryTime());
+                return [];
+            }
+
+            var targetSites = _siteDiscoveryService.GetSites()
+                .Where(site => site.Domains.Any(siteDomain => targetDomains.Any(targetDomain =>
+                    string.Equals(IisSiteDiscoveryService.NormalizeDomain(siteDomain), targetDomain, StringComparison.OrdinalIgnoreCase))))
+                .Select(site => site.Name)
+                .Where(IisDenyListWriter.IsValidSiteName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Order(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (targetSites.Length == 0)
+            {
+                RecordAction(actor, "add", "*", normalizedIp, reason, "no-matching-sites", policy, GetExpiryTime());
+                LogDenyAction("add", "no-matching-sites", normalizedIp, "*", reason, securityEvent, string.Join(", ", targetDomains));
+                return [];
+            }
+
+            var updatedSites = new List<string>(targetSites.Length);
+            foreach (var siteName in targetSites)
+            {
+                if (AddDeniedIp(siteName, normalizedIp, actor, reason, securityEvent, string.Join(", ", targetDomains)))
+                {
+                    updatedSites.Add(siteName);
+                }
+            }
+
+            return updatedSites;
+        }
     }
 
     public bool RemoveDeniedIp(
@@ -249,86 +433,182 @@ public sealed class IisDenyListService : IIisDenyListService
         string clientIp,
         string actor = "manual",
         string reason = "Manual deny-list removal")
+        => RemoveDeniedIpWithStatus(siteName, clientIp, actor, reason) is
+            DenyListRemovalStatus.Removed or DenyListRemovalStatus.Simulated;
+
+    public DenyListRemovalStatus RemoveDeniedIpWithStatus(
+        string siteName,
+        string clientIp,
+        string actor = "manual",
+        string reason = "Manual deny-list removal")
     {
-        if (!CanMutate() || string.IsNullOrWhiteSpace(siteName) || !IPAddress.TryParse(clientIp, out _))
+        if (!IisDenyListWriter.IsValidSiteName(siteName) ||
+            !IisIpAllowList.TryNormalizeAddress(clientIp, out var normalizedIp))
         {
-            return false;
+            return DenyListRemovalStatus.Invalid;
         }
 
         lock (_mutationSync)
         {
-            var auditId = BeginAudit(actor, "remove", siteName, clientIp, reason, expiresAt: null);
-            if (_adminOptions.DryRun)
+            using var mutationLock = _denyListStore.AcquireMutationLock();
+            var policy = _adminOptions.GetEnforcementPolicy();
+            RecordAction(actor, "remove", siteName, normalizedIp, reason, "requested", policy, expiresAt: null);
+            if (!policy.WritesEnabled || policy.Mode == DenyListEnforcementMode.Observe)
             {
-                CompleteAudit(auditId, "dry-run");
-                LogDenyAction("remove", "dry-run", clientIp, siteName, reason, securityEvent: null);
-                return true;
+                RecordAction(actor, "remove", siteName, normalizedIp, reason, "observed", policy, expiresAt: null);
+                return DenyListRemovalStatus.Observed;
             }
 
-            var succeeded = RemoveDeniedIpFromIis(siteName, clientIp, reason);
-            if (succeeded)
+            if (policy.IsSimulation)
             {
-                _denyListStore.RemoveExpiry(siteName, clientIp);
+                RecordAction(actor, "remove", siteName, normalizedIp, reason, "simulated", policy, expiresAt: null);
+                return DenyListRemovalStatus.Simulated;
             }
 
-            CompleteAudit(auditId, succeeded ? "succeeded" : "failed");
-            LogDenyAction("remove", succeeded ? "succeeded" : "failed", clientIp, siteName, reason, securityEvent: null);
-            return succeeded;
+            var managedEntry = _denyListStore.GetManagedDeny(siteName, normalizedIp);
+            if (managedEntry is null)
+            {
+                try
+                {
+                    if (_iisDenyListWriter.Inspect(siteName, normalizedIp).RuleState == "missing")
+                    {
+                        RecordAction(actor, "remove", siteName, normalizedIp, reason, "not-found", policy);
+                        return DenyListRemovalStatus.NotFound;
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    RecordAction(actor, "remove", siteName, normalizedIp, reason, "not-found", policy);
+                    return DenyListRemovalStatus.NotFound;
+                }
+                catch (Exception exception)
+                {
+                    RecordAction(actor, "remove", siteName, normalizedIp, reason, "failed", policy);
+                    LogDenyAction("remove", "failed", normalizedIp, siteName, reason, securityEvent: null, exception: exception);
+                    return DenyListRemovalStatus.Failed;
+                }
+
+                RecordAction(actor, "remove", siteName, normalizedIp, reason, "skipped-not-service-owned", policy);
+                return DenyListRemovalStatus.NotServiceOwned;
+            }
+
+            if (!string.Equals(managedEntry.State, "active", StringComparison.Ordinal))
+            {
+                RecordAction(actor, "remove", siteName, normalizedIp, reason, "recovery-required", policy, managedEntry.ExpiresAt);
+                return DenyListRemovalStatus.RecoveryRequired;
+            }
+
+            var auditId = RecordAction(actor, "remove", siteName, normalizedIp, reason, "attempted", policy, managedEntry.ExpiresAt);
+            if (!_denyListStore.TryTransitionManagedDeny(
+                    siteName, normalizedIp, "active", managedEntry.AuditId, "pending-remove", auditId))
+            {
+                RecordAction(actor, "remove", siteName, normalizedIp, reason, "skipped-concurrent-change", policy, managedEntry.ExpiresAt);
+                return DenyListRemovalStatus.ConcurrentChange;
+            }
+
+            var result = RetryIisMutation(() => _iisDenyListWriter.RemoveDenied(siteName, normalizedIp));
+            if (result.Status is IisDenyListMutationStatus.Removed or IisDenyListMutationStatus.NotFound)
+            {
+                try
+                {
+                    if (!_denyListStore.TryRemoveManagedDeny(siteName, normalizedIp, "pending-remove", auditId))
+                    {
+                        RecordAction(actor, "remove", siteName, normalizedIp, reason, "skipped-concurrent-change", policy, managedEntry.ExpiresAt);
+                        return DenyListRemovalStatus.ConcurrentChange;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    RecordAction(actor, "remove", siteName, normalizedIp, reason, "recovery-required", policy, managedEntry.ExpiresAt);
+                    LogDenyAction("remove", "failed", normalizedIp, siteName, reason, securityEvent: null, expiresAt: managedEntry.ExpiresAt, exception: exception);
+                    return DenyListRemovalStatus.Failed;
+                }
+
+                var outcome = result.Status == IisDenyListMutationStatus.NotFound ? "already-removed" : "succeeded";
+                RecordAction(actor, "remove", siteName, normalizedIp, reason, outcome, policy, managedEntry.ExpiresAt);
+                LogDenyAction("remove", outcome, normalizedIp, siteName, reason, securityEvent: null, expiresAt: managedEntry.ExpiresAt);
+                return DenyListRemovalStatus.Removed;
+            }
+
+            RecordAction(actor, "remove", siteName, normalizedIp, reason, "failed", policy, managedEntry.ExpiresAt);
+            LogDenyAction("remove", "failed", normalizedIp, siteName, reason, securityEvent: null, expiresAt: managedEntry.ExpiresAt, exception: result.Exception);
+            return DenyListRemovalStatus.Failed;
         }
     }
 
     public bool RemoveExpiredDeniedIp(TemporaryDenyListEntry entry)
     {
-        if (!CanMutate())
+        if (!IisDenyListWriter.IsValidSiteName(entry.SiteName) ||
+            !IisIpAllowList.TryNormalizeAddress(entry.ClientIp, out var normalizedIp))
         {
             return false;
         }
 
         lock (_mutationSync)
         {
-            var currentExpiry = _denyListStore.GetExpiry(entry.SiteName, entry.ClientIp);
-            if (currentExpiry is null || currentExpiry.Value != entry.ExpiresAt || currentExpiry.Value > DateTimeOffset.UtcNow)
+            using var mutationLock = _denyListStore.AcquireMutationLock();
+            var policy = _adminOptions.GetEnforcementPolicy();
+            var managedEntry = _denyListStore.GetManagedDeny(entry.SiteName, normalizedIp);
+            if (managedEntry is null || managedEntry.ExpiresAt is null ||
+                managedEntry.ExpiresAt.Value != entry.ExpiresAt || managedEntry.ExpiresAt.Value > DateTimeOffset.UtcNow)
             {
                 return true;
             }
 
-            var auditId = BeginAudit(
-                ExpiryCleanupActor,
-                "expire",
-                entry.SiteName,
-                entry.ClientIp,
-                ExpiryCleanupReason,
-                entry.ExpiresAt);
-            if (_adminOptions.DryRun)
+            RecordAction(ExpiryCleanupActor, "expire", entry.SiteName, normalizedIp, ExpiryCleanupReason, "requested", policy, entry.ExpiresAt);
+            if (!policy.WritesEnabled || policy.Mode == DenyListEnforcementMode.Observe)
             {
-                CompleteAudit(auditId, "dry-run");
-                LogDenyAction("expire", "dry-run", entry.ClientIp, entry.SiteName, ExpiryCleanupReason, securityEvent: null, expiresAt: entry.ExpiresAt);
+                RecordAction(ExpiryCleanupActor, "expire", entry.SiteName, normalizedIp, ExpiryCleanupReason, "observed", policy, entry.ExpiresAt);
                 return false;
             }
 
-            if (!RemoveDeniedIpFromIis(entry.SiteName, entry.ClientIp, ExpiryCleanupReason, deniedRulesOnly: true))
+            if (policy.IsSimulation)
             {
-                CompleteAudit(auditId, "failed");
-                LogDenyAction("expire", "failed", entry.ClientIp, entry.SiteName, ExpiryCleanupReason, securityEvent: null, expiresAt: entry.ExpiresAt);
+                RecordAction(ExpiryCleanupActor, "expire", entry.SiteName, normalizedIp, ExpiryCleanupReason, "simulated-expiry", policy, entry.ExpiresAt);
                 return false;
             }
 
-            _denyListStore.RemoveExpiry(entry.SiteName, entry.ClientIp);
-            CompleteAudit(auditId, "succeeded");
-            LogDenyAction("expire", "succeeded", entry.ClientIp, entry.SiteName, ExpiryCleanupReason, securityEvent: null, expiresAt: entry.ExpiresAt);
+            if (!string.Equals(managedEntry.State, "active", StringComparison.Ordinal))
+            {
+                RecordAction(ExpiryCleanupActor, "expire", entry.SiteName, normalizedIp, ExpiryCleanupReason, "recovery-required", policy, entry.ExpiresAt);
+                return false;
+            }
+
+            var auditId = RecordAction(ExpiryCleanupActor, "expire", entry.SiteName, normalizedIp, ExpiryCleanupReason, "attempted", policy, entry.ExpiresAt);
+            if (!_denyListStore.TryTransitionManagedDeny(
+                    entry.SiteName, normalizedIp, "active", managedEntry.AuditId, "pending-remove", auditId))
+            {
+                RecordAction(ExpiryCleanupActor, "expire", entry.SiteName, normalizedIp, ExpiryCleanupReason, "skipped-concurrent-change", policy, entry.ExpiresAt);
+                return false;
+            }
+            var result = RetryIisMutation(() => _iisDenyListWriter.RemoveDenied(entry.SiteName, normalizedIp));
+            if (result.Status is not (IisDenyListMutationStatus.Removed or IisDenyListMutationStatus.NotFound))
+            {
+                RecordAction(ExpiryCleanupActor, "expire", entry.SiteName, normalizedIp, ExpiryCleanupReason, "failed", policy, entry.ExpiresAt);
+                LogDenyAction("expire", "failed", normalizedIp, entry.SiteName, ExpiryCleanupReason, securityEvent: null, expiresAt: entry.ExpiresAt, exception: result.Exception);
+                return false;
+            }
+
+            try
+            {
+                if (!_denyListStore.TryRemoveManagedDeny(entry.SiteName, normalizedIp, "pending-remove", auditId))
+                {
+                    RecordAction(ExpiryCleanupActor, "expire", entry.SiteName, normalizedIp, ExpiryCleanupReason, "skipped-concurrent-change", policy, entry.ExpiresAt);
+                    return false;
+                }
+            }
+            catch (Exception exception)
+            {
+                RecordAction(ExpiryCleanupActor, "expire", entry.SiteName, normalizedIp, ExpiryCleanupReason, "recovery-required", policy, entry.ExpiresAt);
+                LogDenyAction("expire", "failed", normalizedIp, entry.SiteName, ExpiryCleanupReason, securityEvent: null, expiresAt: entry.ExpiresAt, exception: exception);
+                return false;
+            }
+
+            var outcome = result.Status == IisDenyListMutationStatus.NotFound ? "expired-already-removed" : "expired";
+            RecordAction(ExpiryCleanupActor, "expire", entry.SiteName, normalizedIp, ExpiryCleanupReason, outcome, policy, entry.ExpiresAt);
+            LogDenyAction("expire", outcome, normalizedIp, entry.SiteName, ExpiryCleanupReason, securityEvent: null, expiresAt: entry.ExpiresAt);
             return true;
         }
-    }
-
-    private bool CanMutate()
-    {
-        if (_adminOptions.EnableDenyListChanges)
-        {
-            return true;
-        }
-
-        _logger.LogWarning("Deny-list mutation was skipped because IisAdmin:EnableDenyListChanges is disabled.");
-        return false;
     }
 
     private bool IsAllowListed(
@@ -337,6 +617,7 @@ public sealed class IisDenyListService : IIisDenyListService
         string action,
         string siteName,
         string reason,
+        DenyListEnforcementPolicy policy,
         SecurityEvent? securityEvent,
         string? domain = null)
     {
@@ -346,7 +627,7 @@ public sealed class IisDenyListService : IIisDenyListService
         }
 
         LogDenyAction(action, "skipped-allow-list", clientIp, siteName, reason, securityEvent, domain);
-        RecordCompletedAudit(actor, action, siteName, clientIp, reason, _adminOptions.DryRun, "skipped-allow-list", GetExpiryTime());
+        RecordAction(actor, action, siteName, clientIp, reason, "skipped-allow-list", policy, GetExpiryTime());
         return true;
     }
 
@@ -361,23 +642,23 @@ public sealed class IisDenyListService : IIisDenyListService
         DateTimeOffset? expiresAt = null,
         Exception? exception = null)
     {
-        const string message = "IIS deny-list {Action} {Outcome}. ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason} SiteName={SiteName} ExpiresAt={ExpiresAt} Reason={Reason}";
+        const string message = "IIS deny-list {Action} {Outcome}. ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason} SiteName={SiteName} ExpiresAt={ExpiresAt}";
         var logDomain = securityEvent?.Domain ?? domain;
         var riskScore = securityEvent?.RiskScore;
         var riskSeverity = securityEvent?.RiskSeverity;
-        var detectionReason = securityEvent?.DetectionReason ?? reason;
+        var detectionReason = securityEvent?.DetectionReason;
 
         if (exception is not null)
         {
-            _logger.LogError(exception, message, action, outcome, clientIp, logDomain, riskScore, riskSeverity, detectionReason, siteName, expiresAt, reason);
+            _logger.LogError(exception, message, action, outcome, clientIp, logDomain, riskScore, riskSeverity, detectionReason, siteName, expiresAt);
         }
         else if (outcome == "failed")
         {
-            _logger.LogWarning(message, action, outcome, clientIp, logDomain, riskScore, riskSeverity, detectionReason, siteName, expiresAt, reason);
+            _logger.LogWarning(message, action, outcome, clientIp, logDomain, riskScore, riskSeverity, detectionReason, siteName, expiresAt);
         }
         else
         {
-            _logger.LogInformation(message, action, outcome, clientIp, logDomain, riskScore, riskSeverity, detectionReason, siteName, expiresAt, reason);
+            _logger.LogInformation(message, action, outcome, clientIp, logDomain, riskScore, riskSeverity, detectionReason, siteName, expiresAt);
         }
     }
 
@@ -385,6 +666,50 @@ public sealed class IisDenyListService : IIisDenyListService
         => _adminOptions.TemporaryBanMinutes > 0
             ? DateTimeOffset.UtcNow.AddMinutes(_adminOptions.TemporaryBanMinutes)
             : null;
+
+    private long RecordAction(
+        string actor,
+        string action,
+        string siteName,
+        string clientIp,
+        string reason,
+        string outcome,
+        DenyListEnforcementPolicy policy,
+        DateTimeOffset? expiresAt = null)
+        => _denyListStore.RecordAudit(new DenyListAuditRecord(
+            0,
+            string.IsNullOrWhiteSpace(actor) ? "unknown" : actor,
+            action,
+            siteName,
+            clientIp,
+            string.IsNullOrWhiteSpace(reason) ? action : reason[..Math.Min(reason.Length, 1024)],
+            DateTimeOffset.UtcNow,
+            policy.Mode != DenyListEnforcementMode.Enforce,
+            outcome,
+            expiresAt));
+
+    private static IisDenyListMutationResult RetryIisMutation(Func<IisDenyListMutationResult> mutation)
+    {
+        const int maximumAttempts = 3;
+        for (var attempt = 1; attempt <= maximumAttempts; attempt++)
+        {
+            var result = mutation();
+            if (result.Status != IisDenyListMutationStatus.Failed ||
+                result.Exception is null ||
+                !IsTransientIisFailure(result.Exception) ||
+                attempt == maximumAttempts)
+            {
+                return result;
+            }
+
+            Thread.Sleep(attempt * 100);
+        }
+
+        throw new InvalidOperationException("The bounded IIS retry loop exited unexpectedly.");
+    }
+
+    private static bool IsTransientIisFailure(Exception exception)
+        => exception is IOException or TimeoutException or COMException;
 
     private long BeginAudit(string actor, string action, string siteName, string clientIp, string reason, DateTimeOffset? expiresAt)
         => _denyListStore.BeginAudit(new DenyListAuditRecord(
@@ -451,7 +776,7 @@ public sealed class IisDenyListService : IIisDenyListService
     {
         try
         {
-            var result = _iisDenyListWriter.RemoveDenied(siteName, clientIp, deniedRulesOnly);
+            var result = _iisDenyListWriter.RemoveDenied(siteName, clientIp);
             if (result.Status == IisDenyListMutationStatus.Failed)
             {
                 if (result.Exception is { } exception)
@@ -522,18 +847,17 @@ public sealed class IisDenyListService : IIisDenyListService
             reason);
     }
 
-    private static string NormalizeDomain(string domain)
-    {
-        var value = domain.Trim().TrimEnd('.');
-        var colonIndex = value.LastIndexOf(':');
-        return colonIndex > -1 && value.IndexOf(':') == colonIndex ? value[..colonIndex] : value;
-    }
-
     private static IisAdminOptions ValidateOptions(IisAdminOptions options)
     {
         if (options.TemporaryBanMinutes < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "IisAdmin:TemporaryBanMinutes must be zero or greater.");
+        }
+
+        if (!IisAdminOptions.IsValidEnforcementMode(options.EnforcementMode) ||
+            !IisIpAllowList.IsValidAllowList(options.AllowList))
+        {
+            throw new ArgumentException("IIS enforcement mode or IP allow-list configuration is invalid.", nameof(options));
         }
 
         return options;

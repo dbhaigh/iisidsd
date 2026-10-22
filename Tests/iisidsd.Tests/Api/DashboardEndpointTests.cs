@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Security.Claims;
 using System.Text;
@@ -32,6 +33,8 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
     private readonly FakeSiteDiscoveryService _siteDiscoveryService = new();
     private readonly FakeDenyListService _denyListService = new();
     private readonly FakeDenyListStore _denyListStore = new();
+    private readonly FakeAnalystIncidentStore _incidentStore = new();
+    private readonly FakeBackendConfigurationStore _configurationStore = new();
     private readonly NonMatchingAllowList _allowList = new();
     private WebApplication _app = null!;
     private HttpClient _client = null!;
@@ -72,10 +75,18 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
             options.EnableDenyListChanges = true;
             options.DryRun = false;
         });
+        builder.Services.Configure<DashboardOptions>(options =>
+        {
+            options.MaximumEventStreamSubscribers = 2;
+            options.EventStreamHeartbeatSeconds = 1;
+            options.EventStreamWriteTimeoutSeconds = 2;
+        });
         builder.Services.AddSingleton<IisObservability>();
         builder.Services.AddSingleton<SqliteHealthProbe>();
-        builder.Services.AddSingleton<IBackendConfigurationStore, FakeBackendConfigurationStore>();
+        builder.Services.AddSingleton<IBackendConfigurationStore>(_configurationStore);
         builder.Services.AddSingleton<IEventStore>(_eventStore);
+        builder.Services.AddSingleton<IReplayableEventStore>(_eventStore);
+        builder.Services.AddSingleton<IAnalystIncidentStore>(_incidentStore);
         builder.Services.AddSingleton<IIpAggregationService>(_aggregationService);
         builder.Services.AddSingleton<IBanCountService>(_banCountService);
         builder.Services.AddSingleton<IIisSiteDiscoveryService>(_siteDiscoveryService);
@@ -86,11 +97,12 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         _app = builder.Build();
         _app.Use(async (context, next) =>
         {
-            context.Connection.RemoteIpAddress = IPAddress.Parse("198.51.100.50");
+            context.Connection.RemoteIpAddress = IPAddress.Parse(
+                context.Request.Headers["X-Test-Remote-IP"].FirstOrDefault() ?? "198.51.100.50");
             await next();
         });
         _app.UseAuthentication();
-        _app.UseDashboardAccessPolicy(remoteAccessEnabled: true);
+        _app.UseDashboardAccessPolicy(remoteAccessEnabled: true, ["localhost", "dashboard.example"]);
         _app.UseAuthorization();
         _app.MapDashboardEndpoints(new JsonSerializerOptions(JsonSerializerDefaults.Web));
         _app.MapBackendConfigurationEndpoints();
@@ -117,14 +129,10 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         var paths = new[]
         {
             "/health",
-            "/metrics",
             "/api/events",
             "/api/findings",
             $"/api/findings/{ClientIp}",
             $"/api/findings/{ClientIp}/events",
-            "/api/ban-counts",
-            "/api/iis/sites",
-            "/api/iis/sites/Example%20Site/deny-list",
             "/api/events/stream"
         };
 
@@ -139,11 +147,10 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
 
         using var healthResponse = await SendAsync(HttpMethod.Get, "/health", body: null, role: "user");
         using var health = JsonDocument.Parse(await healthResponse.Content.ReadAsStringAsync());
-        Assert.True(health.RootElement.GetProperty("sqliteConnectionHealthy").GetBoolean());
-        Assert.False(health.RootElement.GetProperty("dryRun").GetBoolean());
-        Assert.Equal(JsonValueKind.Null, health.RootElement.GetProperty("lastAutoDeny").ValueKind);
+        Assert.Equal("ok", health.RootElement.GetProperty("status").GetString());
+        Assert.Single(health.RootElement.EnumerateObject());
 
-        using var streamResponse = await SendAsync(HttpMethod.Get, "/api/events/stream", body: null, role: "user");
+        using var streamResponse = await SendAsync(HttpMethod.Get, "/api/events/stream?afterSequence=0", body: null, role: "user");
         var streamContent = await streamResponse.Content.ReadAsStringAsync();
         Assert.Contains("event: etw", streamContent);
         Assert.Contains(ClientIp, streamContent);
@@ -164,18 +171,172 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task VersionedEvents_ReturnCursorPagesAndValidateBounds()
+    {
+        using var latestResponse = await SendAsync(HttpMethod.Get, "/api/v2/events?limit=10", body: null, role: "user");
+        Assert.Equal(HttpStatusCode.OK, latestResponse.StatusCode);
+        using var latest = JsonDocument.Parse(await latestResponse.Content.ReadAsStringAsync());
+        Assert.Equal("latest", latest.RootElement.GetProperty("direction").GetString());
+        var envelope = Assert.Single(latest.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal(1, envelope.GetProperty("cursor").GetInt64());
+        Assert.Equal("iis.request", envelope.GetProperty("type").GetString());
+        Assert.Equal(ClientIp, envelope.GetProperty("payload").GetProperty("clientIp").GetString());
+
+        using var replayResponse = await SendAsync(HttpMethod.Get, "/api/v2/events?afterSequence=0", body: null, role: "user");
+        using var replay = JsonDocument.Parse(await replayResponse.Content.ReadAsStringAsync());
+        Assert.Equal("after", replay.RootElement.GetProperty("direction").GetString());
+        Assert.Equal(1, replay.RootElement.GetProperty("items")[0].GetProperty("cursor").GetInt64());
+
+        using var beforeResponse = await SendAsync(HttpMethod.Get, "/api/v2/events?beforeSequence=2", body: null, role: "user");
+        using var before = JsonDocument.Parse(await beforeResponse.Content.ReadAsStringAsync());
+        Assert.Equal(1, before.RootElement.GetProperty("items")[0].GetProperty("cursor").GetInt64());
+
+        using var boundaryResponse = await SendAsync(HttpMethod.Get, "/api/v2/events?afterSequence=1", body: null, role: "user");
+        using var boundary = JsonDocument.Parse(await boundaryResponse.Content.ReadAsStringAsync());
+        Assert.Empty(boundary.RootElement.GetProperty("items").EnumerateArray());
+
+        using var invalidLimit = await SendAsync(HttpMethod.Get, "/api/v2/events?limit=1001", body: null, role: "user");
+        Assert.Equal(HttpStatusCode.BadRequest, invalidLimit.StatusCode);
+    }
+
+    [Fact]
+    public async Task VersionedEventStream_ReplaysEnvelopeAndReportsRetentionGaps()
+    {
+        _eventStore.PrunedThroughSequence = 2;
+        using var response = await SendAsync(HttpMethod.Get, "/api/v2/events/stream?afterSequence=0", body: null, role: "user");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var stream = await response.Content.ReadAsStringAsync();
+        Assert.Contains("event: recovery", stream);
+        Assert.Contains("retention_gap", stream);
+        Assert.Contains("event: iis.event.v1", stream);
+        Assert.Contains("\"cursor\":1", stream);
+        Assert.Contains("\"type\":\"iis.request\"", stream);
+        Assert.Contains("event: checkpoint", stream);
+        Assert.Contains("id: 2", stream);
+    }
+
+    [Fact]
+    public async Task VersionedEventStream_CheckpointsWhenRetentionRemovedEveryReplayRow()
+    {
+        _eventStore.EmitOnSubscribe = false;
+        _eventStore.PruneAllEvents = true;
+        _eventStore.PrunedThroughSequence = 1;
+        using var response = await SendAsync(HttpMethod.Get, "/api/v2/events/stream?afterSequence=0", body: null, role: "user");
+        var stream = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("retention_gap", stream);
+        Assert.Contains("event: checkpoint", stream);
+        Assert.Contains("id: 1", stream);
+        Assert.DoesNotContain("event: iis.event.v1", stream);
+    }
+
+    [Fact]
+    public async Task VersionedEventStream_ReplaysEventsPublishedDuringReconnectOnlyOnce()
+    {
+        _eventStore.PublishDuringSubscribe = true;
+        using var response = await SendAsync(HttpMethod.Get, "/api/v2/events/stream?afterSequence=0", body: null, role: "user");
+        var stream = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, stream.Split("event: iis.event.v1").Length - 1);
+        Assert.Contains("/during-replay", stream);
+        Assert.Contains("id: 2", stream);
+    }
+
+    [Fact]
+    public async Task VersionedEventStream_UsesLastEventIdForReconnect()
+    {
+        using var request = CreateStreamRequest("/api/v2/events/stream?afterSequence=999");
+        request.Headers.Add("Last-Event-ID", "0");
+        using var response = await _client.SendAsync(request);
+        var stream = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("event: iis.event.v1", stream);
+        Assert.Contains("id: 1", stream);
+    }
+
+    [Fact]
+    public async Task VersionedEventStream_SendsHeartbeatWhileNoEventsArrive()
+    {
+        _eventStore.EmitOnSubscribe = false;
+        _eventStore.CompleteOnSubscribe = false;
+        using var request = CreateStreamRequest("/api/v2/events/stream");
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var reader = new StreamReader(stream);
+
+        Assert.Equal(": connected", await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Equal("retry: 1000", await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Equal(string.Empty, await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.StartsWith(": heartbeat ", await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(3)));
+        Assert.Equal(string.Empty, await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.StartsWith(": heartbeat ", await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(3)));
+    }
+
+    [Fact]
+    public async Task EventStream_RejectsExcessConcurrentSubscribersAndProvidesRetryHint()
+    {
+        _eventStore.EmitOnSubscribe = false;
+        _eventStore.CompleteOnSubscribe = false;
+        var firstRequest = CreateStreamRequest("/api/v2/events/stream");
+        var secondRequest = CreateStreamRequest("/api/v2/events/stream");
+        using var firstResponse = await _client.SendAsync(firstRequest, HttpCompletionOption.ResponseHeadersRead);
+        using var secondResponse = await _client.SendAsync(secondRequest, HttpCompletionOption.ResponseHeadersRead);
+        using var thirdRequest = CreateStreamRequest("/api/v2/events/stream");
+        using var thirdResponse = await _client.SendAsync(thirdRequest, HttpCompletionOption.ResponseHeadersRead);
+
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, thirdResponse.StatusCode);
+        Assert.Equal("1", thirdResponse.Headers.RetryAfter?.Delta?.TotalSeconds.ToString(CultureInfo.InvariantCulture));
+
+        firstResponse.Dispose();
+        secondResponse.Dispose();
+        firstRequest.Dispose();
+        secondRequest.Dispose();
+    }
+
+    [Fact]
+    public async Task EventStream_ClientDisconnectReleasesSubscriberSlot()
+    {
+        _eventStore.EmitOnSubscribe = false;
+        _eventStore.CompleteOnSubscribe = false;
+        using var request = CreateStreamRequest("/api/v2/events/stream");
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+        Assert.Equal(1, _eventStore.ActiveSubscriberCount);
+
+        response.Dispose();
+        request.Dispose();
+        for (var attempt = 0; attempt < 50 && _eventStore.ActiveSubscriberCount != 0; attempt++)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.Equal(0, _eventStore.ActiveSubscriberCount);
+    }
+
+    [Fact]
     public async Task AdministratorEndpoints_RejectAnonymousAndNonAdministrators_AndSucceedForAdministrators()
     {
         var cases = new[]
         {
             (HttpMethod.Get, "/api/configuration", (string?)null),
+            (HttpMethod.Get, "/metrics", (string?)null),
             (HttpMethod.Get, "/api/iis/status", (string?)null),
+            (HttpMethod.Post, "/api/iis/deny-list/preview", $$"""{"siteName":"Example Site","clientIp":"{{ClientIp}}","evidence":["multiple indicators"]}"""),
+            (HttpMethod.Get, "/api/ban-counts", (string?)null),
+            (HttpMethod.Get, "/api/incidents?limit=500", (string?)null),
+            (HttpMethod.Put, $"/api/incidents/{ClientIp}", """{"status":"acknowledged","note":"Reviewed"}"""),
+            (HttpMethod.Get, "/api/iis/sites", (string?)null),
+            (HttpMethod.Get, "/api/iis/sites/Example%20Site/deny-list", (string?)null),
             (HttpMethod.Get, "/api/export/findings", (string?)null),
             (HttpMethod.Get, "/api/export/events?format=csv", (string?)null),
             (HttpMethod.Put, $"/api/ban-counts/{ClientIp}?domain=example.test", """{"banCount":4}"""),
             (HttpMethod.Post, "/api/iis/sites/Example%20Site/deny-list", $$"""{"clientIp":"{{ClientIp}}"}"""),
             (HttpMethod.Post, "/api/iis/deny-list", $$"""{"clientIp":"{{ClientIp}}"}"""),
-            (HttpMethod.Delete, $"/api/iis/sites/Example%20Site/deny-list/{ClientIp}", (string?)null)
+            (HttpMethod.Delete, $"/api/iis/sites/Example%20Site/deny-list/{ClientIp}", """{"reason":"Manual deny-list removal"}""")
         };
 
         foreach (var (method, path, body) in cases)
@@ -185,6 +346,13 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
 
             using var nonAdministratorResponse = await SendAsync(method, path, body, "user");
             Assert.Equal(HttpStatusCode.Forbidden, nonAdministratorResponse.StatusCode);
+            if (path == "/api/configuration")
+            {
+                using var unauthorizedBody = JsonDocument.Parse(await anonymousResponse.Content.ReadAsStringAsync());
+                using var forbiddenBody = JsonDocument.Parse(await nonAdministratorResponse.Content.ReadAsStringAsync());
+                Assert.Equal("Unauthorized", unauthorizedBody.RootElement.GetProperty("error").GetString());
+                Assert.Equal("Forbidden", forbiddenBody.RootElement.GetProperty("error").GetString());
+            }
 
             using var administratorResponse = await SendAsync(method, path, body, "administrator");
             Assert.Equal(HttpStatusCode.OK, administratorResponse.StatusCode);
@@ -194,6 +362,26 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         Assert.Equal(1, _denyListService.AddToDomainsCalls);
         Assert.Equal(1, _denyListService.RemoveCalls);
         Assert.Equal(2, _banCountService.IncrementCalls);
+        Assert.Equal(1, _incidentStore.SaveCalls);
+
+        _denyListService.BulkAddedSites = [];
+        using var duplicateBulkDeny = await SendAsync(
+            HttpMethod.Post,
+            "/api/iis/deny-list",
+            $$"""{"clientIp":"{{ClientIp}}"}""",
+            "administrator");
+        Assert.Equal(HttpStatusCode.OK, duplicateBulkDeny.StatusCode);
+        using var duplicateBulkBody = JsonDocument.Parse(await duplicateBulkDeny.Content.ReadAsStringAsync());
+        Assert.Contains("Example Site", duplicateBulkBody.RootElement.GetProperty("alreadyPresentSites").EnumerateArray().Select(site => site.GetString()));
+        Assert.Equal(2, _banCountService.IncrementCalls);
+
+        _denyListService.RemovalStatus = DenyListRemovalStatus.NotServiceOwned;
+        using var unmanagedRemoval = await SendAsync(
+            HttpMethod.Delete,
+            $"/api/iis/sites/Example%20Site/deny-list/{ClientIp}",
+            "{\"reason\":\"Manual deny-list removal\"}",
+            "administrator");
+        Assert.Equal(HttpStatusCode.Conflict, unmanagedRemoval.StatusCode);
 
         _allowList.Matches = true;
         using var blockedSiteDeny = await SendAsync(
@@ -208,8 +396,8 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
             "administrator");
         Assert.Equal(HttpStatusCode.Forbidden, blockedSiteDeny.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, blockedBulkDeny.StatusCode);
-        Assert.Equal(1, _denyListService.AddCalls);
-        Assert.Equal(1, _denyListService.AddToDomainsCalls);
+        Assert.Equal(2, _denyListService.AddCalls);
+        Assert.Equal(3, _denyListService.AddToDomainsCalls);
     }
 
     [Fact]
@@ -225,6 +413,65 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, administratorResponse.StatusCode);
         using var result = JsonDocument.Parse(await administratorResponse.Content.ReadAsStringAsync());
         Assert.True(result.RootElement.GetProperty("restartRequired").GetBoolean());
+    }
+
+    [Fact]
+    public async Task LoopbackDashboard_RemainsViewableButManagementRequiresAdministrator()
+    {
+        using var publicView = await SendAsync(HttpMethod.Get, "/api/events", body: null, role: "user", remoteIp: "127.0.0.1");
+        using var deniedWrite = await SendAsync(HttpMethod.Patch, "/api/configuration", """{"settings":{}}""",
+            remoteIp: "127.0.0.1");
+        using var deniedRead = await SendAsync(HttpMethod.Get, "/api/ban-counts", body: null, remoteIp: "127.0.0.1");
+        using var deniedIisMutation = await SendAsync(HttpMethod.Post, "/api/iis/deny-list",
+            $$"""{"clientIp":"{{ClientIp}}"}""", remoteIp: "127.0.0.1");
+
+        Assert.Equal(HttpStatusCode.OK, publicView.StatusCode);
+        Assert.Equal("DENY", publicView.Headers.GetValues("X-Frame-Options").Single());
+        Assert.Contains("frame-ancestors 'none'", publicView.Headers.GetValues("Content-Security-Policy").Single());
+        Assert.Equal("nosniff", publicView.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal("no-referrer", publicView.Headers.GetValues("Referrer-Policy").Single());
+        Assert.Equal(HttpStatusCode.Unauthorized, deniedWrite.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, deniedRead.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, deniedIisMutation.StatusCode);
+        using var authorizationError = JsonDocument.Parse(await deniedWrite.Content.ReadAsStringAsync());
+        Assert.Equal("Unauthorized", authorizationError.RootElement.GetProperty("error").GetString());
+        Assert.Equal(0, _denyListService.AddToDomainsCalls);
+        Assert.Equal(0, _banCountService.IncrementCalls);
+    }
+
+    [Fact]
+    public async Task RemoteAccess_RequiresHttpsAndWindowsAuthentication()
+    {
+        using var httpResponse = await SendAsync(HttpMethod.Get, "/api/findings", body: null, scheme: "http");
+        using var anonymousHttpsResponse = await SendAsync(HttpMethod.Get, "/api/findings", body: null);
+        using var authenticatedHttpsResponse = await SendAsync(HttpMethod.Get, "/api/findings", body: null, role: "user");
+        using var customHostResponse = await SendAsync(HttpMethod.Get, "/api/findings", body: null, role: "user",
+            host: "dashboard.example", origin: "https://dashboard.example");
+
+        Assert.Equal(HttpStatusCode.Forbidden, httpResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymousHttpsResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, authenticatedHttpsResponse.StatusCode);
+        Assert.Contains("max-age=31536000", authenticatedHttpsResponse.Headers.GetValues("Strict-Transport-Security").Single());
+        Assert.False(httpResponse.Headers.Contains("Strict-Transport-Security"));
+        Assert.Equal(HttpStatusCode.OK, customHostResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task UnsafeRequests_RejectCrossOriginAndHostileHostBeforeMutation()
+    {
+        using var crossOrigin = await SendAsync(HttpMethod.Post, "/api/iis/deny-list",
+            $$"""{"clientIp":"{{ClientIp}}"}""", role: "administrator", origin: "https://attacker.example");
+        using var hostileHost = await SendAsync(HttpMethod.Patch, "/api/configuration", """{"settings":{}}""",
+            role: "administrator", host: "attacker.example", origin: "https://attacker.example");
+        using var missingOrigin = await SendAsync(HttpMethod.Patch, "/api/configuration", """{"settings":{}}""",
+            role: "administrator", origin: null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, crossOrigin.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, hostileHost.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, missingOrigin.StatusCode);
+        Assert.Equal(0, _denyListService.AddToDomainsCalls);
+        Assert.Equal(0, _banCountService.IncrementCalls);
+        Assert.Equal(0, _configurationStore.SaveCalls);
     }
 
     [Fact]
@@ -260,9 +507,29 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, invalidFormatResponse.StatusCode);
     }
 
-    private Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, string? body, string? role = null)
+    private Task<HttpResponseMessage> SendAsync(
+        HttpMethod method,
+        string path,
+        string? body,
+        string? role = null,
+        string? origin = "https://localhost",
+        string remoteIp = "198.51.100.50",
+        string host = "localhost",
+        string scheme = "https")
     {
-        var request = new HttpRequestMessage(method, path);
+        var request = new HttpRequestMessage(method, $"{scheme}://localhost{path}");
+        request.Headers.Host = host;
+        request.Headers.Add("X-Test-Remote-IP", remoteIp);
+        if (method != HttpMethod.Get && method != HttpMethod.Head && method != HttpMethod.Options)
+        {
+            if (origin is not null)
+            {
+                request.Headers.TryAddWithoutValidation("Origin", origin);
+                request.Headers.TryAddWithoutValidation("Sec-Fetch-Site",
+                    string.Equals(origin, $"{scheme}://{host}", StringComparison.OrdinalIgnoreCase) ? "same-origin" : "cross-site");
+            }
+        }
+
         if (body is not null)
         {
             request.Content = new StringContent(body, Encoding.UTF8, "application/json");
@@ -274,6 +541,13 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         }
 
         return _client.SendAsync(request);
+    }
+
+    private static HttpRequestMessage CreateStreamRequest(string path)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.Add(TestAuthenticationHandler.RoleHeader, "user");
+        return request;
     }
 
     private sealed class TestAuthenticationHandler(
@@ -303,9 +577,28 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         }
     }
 
-    private sealed class FakeEventStore : IEventStore
+    private sealed class FakeEventStore : IEventStore, IReplayableEventStore
     {
+        private readonly object _sync = new();
+        private readonly List<StoredSecurityEvent> _events;
+        private readonly Dictionary<Guid, Channel<SecurityEvent>> _subscribers = [];
+        private long _nextSequenceId = 2;
+
+        public FakeEventStore()
+        {
+            _events = [ToStored(_event, 1)];
+        }
+
         public bool EmitOnSubscribe { get; set; } = true;
+        public bool CompleteOnSubscribe { get; set; } = true;
+        public bool PublishDuringSubscribe { get; set; }
+        public bool PruneAllEvents { get; set; }
+        public int MaximumSubscribers { get; set; } = 2;
+        public long PrunedThroughSequence { get; set; }
+        public int ActiveSubscriberCount
+        {
+            get { lock (_sync) return _subscribers.Count; }
+        }
 
         private readonly SecurityEvent _event = new(
             DateTimeOffset.UtcNow,
@@ -324,25 +617,173 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
             RiskIndicators: ["test-indicator"]);
 
         public IReadOnlyList<SecurityEvent> GetRecent(int limit, string? clientIp = null, string? domain = null, bool suspiciousOnly = false)
-            => new[] { _event }
-                .Where(webEvent => clientIp is null || string.Equals(webEvent.ClientIp, clientIp, StringComparison.OrdinalIgnoreCase))
-                .Where(webEvent => domain is null || string.Equals(webEvent.Domain, domain, StringComparison.OrdinalIgnoreCase))
-                .Where(webEvent => !suspiciousOnly || webEvent.IsSuspicious)
-                .Take(limit)
-                .ToArray();
+        {
+            lock (_sync)
+            {
+                return FilterEvents(clientIp, domain, suspiciousOnly)
+                    .Reverse()
+                    .Take(limit)
+                    .Select(webEvent => webEvent.ToSecurityEvent())
+                    .ToArray();
+            }
+        }
 
-        public void Publish(SecurityEvent webEvent) => throw new NotSupportedException();
+        public EventPage<StoredSecurityEvent> GetLatestPage(int limit, string? clientIp = null, string? domain = null, bool suspiciousOnly = false)
+        {
+            lock (_sync)
+            {
+                var matching = FilterEvents(clientIp, domain, suspiciousOnly).ToArray();
+                var items = matching.TakeLast(limit).ToArray();
+                return CreatePage(items, matching.Length > limit, false);
+            }
+        }
+
+        public EventPage<StoredSecurityEvent> GetPageAfter(long afterSequence, int limit, string? clientIp = null, string? domain = null, bool suspiciousOnly = false)
+        {
+            lock (_sync)
+            {
+                var matching = FilterEvents(clientIp, domain, suspiciousOnly).Where(webEvent => webEvent.SequenceId > afterSequence).Take(limit + 1).ToArray();
+                var hasMore = matching.Length > limit;
+                if (hasMore) matching = matching[..limit];
+                return CreatePage(matching, hasMore, afterSequence < PrunedThroughSequence);
+            }
+        }
+
+        public EventPage<StoredSecurityEvent> GetPageBefore(long beforeSequence, int limit, string? clientIp = null, string? domain = null, bool suspiciousOnly = false)
+        {
+            lock (_sync)
+            {
+                var matching = FilterEvents(clientIp, domain, suspiciousOnly)
+                    .Where(webEvent => webEvent.SequenceId < beforeSequence)
+                    .TakeLast(limit + 1)
+                    .ToArray();
+                var hasMore = matching.Length > limit;
+                if (hasMore) matching = matching[1..];
+                return CreatePage(matching, hasMore, false);
+            }
+        }
+
+        public void Publish(SecurityEvent webEvent)
+        {
+            lock (_sync)
+            {
+                var stored = ToStored(webEvent, _nextSequenceId++);
+                _events.Add(stored);
+                foreach (var channel in _subscribers.Values)
+                {
+                    channel.Writer.TryWrite(stored.ToSecurityEvent());
+                }
+            }
+        }
 
         public ChannelReader<SecurityEvent> Subscribe(CancellationToken cancellationToken)
-        {
-            var channel = Channel.CreateUnbounded<SecurityEvent>();
-            if (EmitOnSubscribe)
-            {
-                channel.Writer.TryWrite(_event);
-                channel.Writer.TryComplete();
-            }
+            => SubscribeWithCursor(cancellationToken).Reader;
 
-            return channel.Reader;
+        public EventStreamSubscription SubscribeWithCursor(CancellationToken cancellationToken)
+        {
+            lock (_sync)
+            {
+                if (_subscribers.Count >= MaximumSubscribers)
+                {
+                    throw new EventStreamSubscriberLimitException();
+                }
+
+                var id = Guid.NewGuid();
+                var channel = Channel.CreateBounded<SecurityEvent>(new BoundedChannelOptions(8)
+                {
+                    FullMode = BoundedChannelFullMode.Wait,
+                    SingleReader = true,
+                    SingleWriter = false
+                });
+                _subscribers[id] = channel;
+                if (EmitOnSubscribe)
+                {
+                    foreach (var webEvent in _events)
+                    {
+                        channel.Writer.TryWrite(webEvent.ToSecurityEvent());
+                    }
+                }
+
+                var initialCursor = Math.Max(_events.Count == 0 ? 0 : _events[^1].SequenceId, PrunedThroughSequence);
+                if (PublishDuringSubscribe)
+                {
+                    Publish(_event with { Id = Guid.NewGuid().ToString("N"), Path = "/during-replay" });
+                }
+
+                if (CompleteOnSubscribe)
+                {
+                    channel.Writer.TryComplete();
+                    _subscribers.Remove(id);
+                }
+                else
+                {
+                    cancellationToken.Register(() => RemoveSubscriber(id));
+                }
+
+                return new EventStreamSubscription(channel.Reader, initialCursor);
+            }
+        }
+
+        private IEnumerable<StoredSecurityEvent> FilterEvents(string? clientIp, string? domain, bool suspiciousOnly)
+        {
+            if (PruneAllEvents) return Enumerable.Empty<StoredSecurityEvent>();
+            return _events
+                .Where(webEvent => clientIp is null || string.Equals(webEvent.ClientIp, clientIp, StringComparison.OrdinalIgnoreCase))
+                .Where(webEvent => domain is null || string.Equals(webEvent.Domain, domain, StringComparison.OrdinalIgnoreCase))
+                .Where(webEvent => !suspiciousOnly || webEvent.IsSuspicious);
+        }
+
+        private EventPage<StoredSecurityEvent> CreatePage(StoredSecurityEvent[] items, bool hasMore, bool gapDetected)
+            => new(
+                items,
+                items.Length == 0 ? null : items[0].SequenceId,
+                items.Length == 0 ? null : items[^1].SequenceId,
+                Math.Max(_events.Count == 0 ? 0 : _events[^1].SequenceId, PrunedThroughSequence),
+                hasMore,
+                gapDetected,
+                _events.Count == 0 || PruneAllEvents ? null : _events[0].SequenceId,
+                PrunedThroughSequence);
+
+        private void RemoveSubscriber(Guid id)
+        {
+            lock (_sync)
+            {
+                if (_subscribers.Remove(id, out var channel)) channel.Writer.TryComplete();
+            }
+        }
+
+        private static StoredSecurityEvent ToStored(SecurityEvent webEvent, long sequenceId)
+            => new(
+                sequenceId,
+                webEvent.Id,
+                webEvent.Timestamp,
+                webEvent.Server,
+                webEvent.Domain,
+                webEvent.Method,
+                webEvent.Path,
+                webEvent.ClientIp,
+                webEvent.StatusCode,
+                webEvent.UserAgent,
+                webEvent.Properties,
+                webEvent.IsSuspicious,
+                webEvent.DetectionReason,
+                webEvent.RiskScore,
+                webEvent.RiskSeverity,
+                webEvent.RiskIndicators ?? []);
+    }
+
+    private sealed class FakeAnalystIncidentStore : IAnalystIncidentStore
+    {
+        public int SaveCalls { get; private set; }
+
+        public IReadOnlyList<AnalystIncidentRecord> List(int limit = 500) => [];
+
+        public AnalystIncidentRecord? Get(string clientIp) => null;
+
+        public AnalystIncidentRecord Save(string clientIp, string status, string note, string updatedBy)
+        {
+            SaveCalls++;
+            return new AnalystIncidentRecord(clientIp, status, note, DateTimeOffset.UtcNow, updatedBy);
         }
     }
 
@@ -352,6 +793,7 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
             .Parse("""{"Urls":"http://127.0.0.1:5080"}""")
             .RootElement
             .Clone();
+        public int SaveCalls { get; private set; }
 
         public Task<JsonElement> GetSettingsAsync(CancellationToken cancellationToken)
             => Task.FromResult(Settings);
@@ -359,7 +801,10 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         public Task<BackendConfigurationSaveResult> SaveSettingsAsync(
             JsonElement settings,
             CancellationToken cancellationToken)
-            => Task.FromResult(new BackendConfigurationSaveResult(true, new Dictionary<string, string[]>()));
+        {
+            SaveCalls++;
+            return Task.FromResult(new BackendConfigurationSaveResult(true, new Dictionary<string, string[]>()));
+        }
     }
 
     private sealed class FakeAggregationService : IIpAggregationService
@@ -423,8 +868,13 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         public int AddCalls { get; private set; }
         public int AddToDomainsCalls { get; private set; }
         public int RemoveCalls { get; private set; }
+        public IReadOnlyList<string> BulkAddedSites { get; set; } = ["Example Site"];
+        public DenyListRemovalStatus RemovalStatus { get; set; } = DenyListRemovalStatus.Removed;
 
         public IReadOnlyList<string> GetDeniedIps(string siteName) => [ClientIp];
+        public DenyListPreview? PreviewDeniedIp(DenyListPreviewRequest request, string actor = "manual")
+            => new(request.SiteName, request.ClientIp, $"ipAddress={request.ClientIp}; allowed=false", null,
+                "Enforce", false, true, "missing", request.Evidence ?? [], [], [], []);
 
         public bool AddDeniedIp(
             string siteName,
@@ -446,21 +896,34 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
             SecurityEvent? securityEvent = null)
         {
             AddToDomainsCalls++;
-            return ["Example Site"];
+            return BulkAddedSites;
         }
 
         public bool RemoveDeniedIp(string siteName, string clientIp, string actor = "manual", string reason = "Manual deny-list removal")
         {
             RemoveCalls++;
-            return true;
+            return RemovalStatus == DenyListRemovalStatus.Removed;
+        }
+
+        public DenyListRemovalStatus RemoveDeniedIpWithStatus(
+            string siteName,
+            string clientIp,
+            string actor = "manual",
+            string reason = "Manual deny-list removal")
+        {
+            RemoveCalls++;
+            return RemovalStatus;
         }
 
         public bool RemoveExpiredDeniedIp(TemporaryDenyListEntry entry) => true;
+        public void ReconcilePendingManagedDenies() { }
     }
 
     private sealed class FakeDenyListStore : IDenyListStore
     {
+        public IDisposable AcquireMutationLock() => new NoopDisposable();
         public long BeginAudit(DenyListAuditRecord record) => 1;
+        public long RecordAudit(DenyListAuditRecord record) => 1;
         public void CompleteAudit(long auditId, string outcome) { }
         public void SetAuditExpiry(long auditId, DateTimeOffset? expiresAt) { }
         public IReadOnlyList<DenyListAuditRecord> GetRecentAudit(int limit) => [];
@@ -468,7 +931,18 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         public DateTimeOffset? GetExpiry(string siteName, string clientIp) => null;
         public void SetExpiry(string siteName, string clientIp, DateTimeOffset expiresAt) { }
         public void RemoveExpiry(string siteName, string clientIp) { }
+        public ManagedDenyListEntry? GetManagedDeny(string siteName, string clientIp) => null;
+        public IReadOnlyList<ManagedDenyListEntry> GetPendingManagedDenies(int limit) => [];
+        public bool TryPrepareManagedDeny(ManagedDenyListEntry entry) => true;
+        public bool CompleteManagedDeny(string siteName, string clientIp, DateTimeOffset? expiresAt, long auditId) => true;
+        public bool TryTransitionManagedDeny(string siteName, string clientIp, string expectedState, long expectedAuditId, string state, long auditId) => true;
+        public bool TryRemoveManagedDeny(string siteName, string clientIp, string expectedState, long expectedAuditId) => true;
         public IReadOnlyList<TemporaryDenyListEntry> GetExpired(DateTimeOffset now, int limit, TemporaryDenyListEntry? after = null) => [];
+
+        private sealed class NoopDisposable : IDisposable
+        {
+            public void Dispose() { }
+        }
     }
 
     private sealed class NonMatchingAllowList : IIpAllowList

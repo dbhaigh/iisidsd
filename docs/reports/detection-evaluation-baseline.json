@@ -1,0 +1,4494 @@
+{
+  "schemaVersion": 1,
+  "detectorVersion": "0.2.3.0",
+  "detectorRevision": "heuristic-evidence-v2",
+  "datasetId": "iisidsd-synthetic-baseline-v1",
+  "datasetDescription": "Deterministic synthetic IIS-like request sequences for regression and comparative evaluation. All domains use .invalid and all addresses are documentation-only ranges.",
+  "datasetSha256": "be5d863b2723238a423758a44fa26ff5f1e04f7999e10c352c2ff1622f83f938",
+  "totalEvents": 225,
+  "scenarioCount": 22,
+  "overall": {
+    "truePositives": 31,
+    "falsePositives": 17,
+    "trueNegatives": 145,
+    "falseNegatives": 32,
+    "precision": 0.6458,
+    "recall": 0.4921,
+    "falsePositiveRate": 0.1049,
+    "falseNegativeRate": 0.5079
+  },
+  "perClass": [
+    {
+      "class": "api_client",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 40,
+        "falseNegatives": 0,
+        "precision": null,
+        "recall": null,
+        "falsePositiveRate": 0,
+        "falseNegativeRate": null
+      }
+    },
+    {
+      "class": "application_generated_error_burst",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 12,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 0,
+        "recall": null,
+        "falsePositiveRate": 1,
+        "falseNegativeRate": null
+      }
+    },
+    {
+      "class": "benign_browsing",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 3,
+        "falseNegatives": 0,
+        "precision": null,
+        "recall": null,
+        "falsePositiveRate": 0,
+        "falseNegativeRate": null
+      }
+    },
+    {
+      "class": "command_injection",
+      "metrics": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0
+      }
+    },
+    {
+      "class": "credential_stuffing_like",
+      "metrics": {
+        "truePositives": 8,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0
+      }
+    },
+    {
+      "class": "directory_traversal",
+      "metrics": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0
+      }
+    },
+    {
+      "class": "distributed_reconnaissance",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 15,
+        "precision": null,
+        "recall": 0,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 1
+      }
+    },
+    {
+      "class": "equivalent_ip_representations",
+      "metrics": {
+        "truePositives": 1,
+        "falsePositives": 2,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 0.3333,
+        "recall": 1,
+        "falsePositiveRate": 1,
+        "falseNegativeRate": 0
+      }
+    },
+    {
+      "class": "high_request_rate",
+      "metrics": {
+        "truePositives": 5,
+        "falsePositives": 0,
+        "trueNegatives": 60,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": 0,
+        "falseNegativeRate": 0
+      }
+    },
+    {
+      "class": "ipv4_repeated_404",
+      "metrics": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0
+      }
+    },
+    {
+      "class": "ipv6_repeated_404",
+      "metrics": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0
+      }
+    },
+    {
+      "class": "legitimate_404",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 1,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 0,
+        "recall": null,
+        "falsePositiveRate": 1,
+        "falseNegativeRate": null
+      }
+    },
+    {
+      "class": "legitimate_auth_failure",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 2,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 0,
+        "recall": null,
+        "falsePositiveRate": 1,
+        "falseNegativeRate": null
+      }
+    },
+    {
+      "class": "legitimate_crawler",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 8,
+        "falseNegatives": 0,
+        "precision": null,
+        "recall": null,
+        "falsePositiveRate": 0,
+        "falseNegativeRate": null
+      }
+    },
+    {
+      "class": "missing_user_agent_reconnaissance",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 1,
+        "precision": null,
+        "recall": 0,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 1
+      }
+    },
+    {
+      "class": "monitoring_system",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 15,
+        "falseNegatives": 0,
+        "precision": null,
+        "recall": null,
+        "falsePositiveRate": 0,
+        "falseNegativeRate": null
+      }
+    },
+    {
+      "class": "rotating_source_reconnaissance",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 8,
+        "precision": null,
+        "recall": 0,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 1
+      }
+    },
+    {
+      "class": "slow_reconnaissance",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 4,
+        "precision": null,
+        "recall": 0,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 1
+      }
+    },
+    {
+      "class": "spoofed_scanner_user_agent",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 1,
+        "precision": null,
+        "recall": 0,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 1
+      }
+    },
+    {
+      "class": "sql_injection",
+      "metrics": {
+        "truePositives": 2,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 1,
+        "precision": 1,
+        "recall": 0.6667,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0.3333
+      }
+    },
+    {
+      "class": "unique_path_enumeration",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 19,
+        "falseNegatives": 2,
+        "precision": null,
+        "recall": 0,
+        "falsePositiveRate": 0,
+        "falseNegativeRate": 1
+      }
+    },
+    {
+      "class": "vulnerability_scanning",
+      "metrics": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0
+      }
+    }
+  ],
+  "detectionLatency": {
+    "detectedScenarios": 1,
+    "undetectedScenarios": 4,
+    "meanMilliseconds": 6000,
+    "medianMilliseconds": 6000
+  },
+  "detectionOptions": {
+    "minimumSuspiciousStatusCode": 400,
+    "requestPathLengthThreshold": 512,
+    "notFoundBurstThreshold": 3,
+    "notFoundBurstLookbackLimit": 250,
+    "notFoundBurstWindowSeconds": 60,
+    "authenticationFailureThreshold": 5,
+    "authenticationFailureWindowSeconds": 60,
+    "authenticationFailureScoreWeight": 1,
+    "statusScoreWeight": 1,
+    "longPathScoreWeight": 2,
+    "repeatedNotFoundScoreWeight": 3,
+    "unusualMethodScoreWeight": 3,
+    "pathFragmentScoreWeight": 5,
+    "unknownExtensionScoreWeight": 2,
+    "scannerUserAgentScoreWeight": 6,
+    "requestRateScoreWeight": 2,
+    "pathScanScoreWeight": 2,
+    "rateThreshold": 60,
+    "rateWindowSeconds": 60,
+    "pathScanUniquePathThreshold": 20,
+    "pathScanWindowSeconds": 60,
+    "maximumTrackedClientHistories": 1024,
+    "maximumTrackedHistoryBuckets": 131072,
+    "maximumTrackedPathsPerHistory": 128,
+    "maximumTrackedPathsTotal": 65536,
+    "maximumTrackedPathLengthCharacters": 1024,
+    "maximumTrackedExtensionSites": 256,
+    "maximumExtensionsPerSite": 128,
+    "maximumEventLatenessSeconds": 2,
+    "suspiciousPathFragments": [
+      "../",
+      "..\\",
+      "%2e",
+      "%2f",
+      "%5c",
+      "%00",
+      "%252e",
+      "wp-admin",
+      "wp-login.php",
+      "phpmyadmin",
+      "/.env",
+      "/.git",
+      "git/config",
+      "/etc/passwd",
+      "/etc/shadow",
+      "/proc/self/environ",
+      "cmd.exe",
+      "powershell",
+      "cmd=",
+      "exec=",
+      "\u003Cscript",
+      "union select",
+      "sleep(",
+      "benchmark(",
+      "xp_cmdshell",
+      "jndi:",
+      "${jndi:",
+      "actuator",
+      "server-status",
+      "manager/html",
+      "cgi-bin",
+      "eval-stdin.php",
+      "vendor/phpunit",
+      "solr/admin",
+      "console/login",
+      "aws/credentials",
+      "../",
+      "..\\",
+      "%2e",
+      "%2f",
+      "%5c",
+      "%00",
+      "%252e",
+      "wp-admin",
+      "wp-login.php",
+      "phpmyadmin",
+      "/.env",
+      "/.git",
+      "git/config",
+      "/etc/passwd",
+      "/etc/shadow",
+      "/proc/self/environ",
+      "cmd.exe",
+      "powershell",
+      "cmd=",
+      "exec=",
+      "\u003Cscript",
+      "union select",
+      "sleep(",
+      "benchmark(",
+      "xp_cmdshell",
+      "jndi:",
+      "${jndi:",
+      "actuator",
+      "server-status",
+      "manager/html",
+      "cgi-bin",
+      "eval-stdin.php",
+      "vendor/phpunit",
+      "solr/admin",
+      "console/login",
+      "aws/credentials"
+    ],
+    "scannerUserAgents": [
+      "sqlmap",
+      "nikto",
+      "nmap",
+      "masscan",
+      "burp",
+      "acunetix",
+      "nessus",
+      "openvas",
+      "owasp zap",
+      "zaproxy",
+      "dirbuster",
+      "gobuster",
+      "ffuf",
+      "feroxbuster",
+      "nuclei",
+      "wpscan",
+      "metasploit",
+      "arachni",
+      "w3af",
+      "whatweb",
+      "skipfish",
+      "hydra",
+      "sqlmap",
+      "nikto",
+      "nmap",
+      "masscan",
+      "burp",
+      "acunetix",
+      "nessus",
+      "openvas",
+      "owasp zap",
+      "zaproxy",
+      "dirbuster",
+      "gobuster",
+      "ffuf",
+      "feroxbuster",
+      "nuclei",
+      "wpscan",
+      "metasploit",
+      "arachni",
+      "w3af",
+      "whatweb",
+      "skipfish",
+      "hydra"
+    ]
+  },
+  "labelQuality": [
+    "All records are synthetic; no customer, production, or personally identifying data is included.",
+    "No sanitized production corpus was supplied; the versioned fixture format can also replay sanitized IIS event rows when such data is approved and available.",
+    "Labels are expected event-level analyst judgments for these constructed scenarios, not verified incident ground truth.",
+    "Authentication identity, account outcome, and request headers other than the captured UserAgent field are unavailable to the detector; credential-stuffing labels are intentionally limited to repeated 401 responses from one source.",
+    "Slow, distributed, and rotating-source scenarios are sequence-level hostile hypotheses; individual requests can be indistinguishable from legitimate traffic.",
+    "Each scenario has a fresh detector and in-memory event history; sequence behavior is replayed within each scenario, without history leaking across scenarios.",
+    "The dataset is deliberately small and scenario-balanced rather than prevalence-representative, so aggregate metrics must not be interpreted as expected production accuracy."
+  ],
+  "scenarios": [
+    {
+      "id": "normal-browsing-static-assets",
+      "class": "benign_browsing",
+      "description": "Successful page and common static assets from an ordinary browser.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 3,
+        "falseNegatives": 0,
+        "precision": null,
+        "recall": null,
+        "falsePositiveRate": 0,
+        "falseNegativeRate": null
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "browse-home",
+          "class": "benign_browsing",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "browse-css",
+          "class": "benign_browsing",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "browse-js",
+          "class": "benign_browsing",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        }
+      ]
+    },
+    {
+      "id": "legitimate-not-found",
+      "class": "legitimate_404",
+      "description": "A single user follows a stale link; a 404 is not itself hostile ground truth.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 1,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 0,
+        "recall": null,
+        "falsePositiveRate": 1,
+        "falseNegativeRate": null
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "not-found-one",
+          "class": "legitimate_404",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "legitimate-authentication-failures",
+      "class": "legitimate_auth_failure",
+      "description": "Two mistyped-password responses without account or identity fields.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 2,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 0,
+        "recall": null,
+        "falsePositiveRate": 1,
+        "falseNegativeRate": null
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "auth-failure-001",
+          "class": "legitimate_auth_failure",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "auth-failure-002",
+          "class": "legitimate_auth_failure",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vulnerability-scanning-probes",
+      "class": "vulnerability_scanning",
+      "description": "Common CMS, source-control, and exposed-configuration probes.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "probe-wp",
+          "class": "vulnerability_scanning",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 13,
+          "riskSeverity": "Critical",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Corroborated",
+          "evidenceFamilyCount": 3,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "SuspiciousPathFragment",
+              "family": "PathContent",
+              "configuredWeight": 5,
+              "scoreContribution": 5,
+              "contributed": true
+            },
+            {
+              "code": "UnknownExtension",
+              "family": "ResponseOutcome",
+              "configuredWeight": 2,
+              "scoreContribution": 2,
+              "contributed": true
+            },
+            {
+              "code": "ScannerUserAgent",
+              "family": "UserAgent",
+              "configuredWeight": 6,
+              "scoreContribution": 6,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "suspicious request URI pattern",
+            "request targets file type not seen in site history",
+            "known scanner user-agent"
+          ]
+        },
+        {
+          "eventId": "probe-git",
+          "class": "vulnerability_scanning",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 12,
+          "riskSeverity": "Critical",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Corroborated",
+          "evidenceFamilyCount": 3,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            },
+            {
+              "code": "SuspiciousPathFragment",
+              "family": "PathContent",
+              "configuredWeight": 5,
+              "scoreContribution": 5,
+              "contributed": true
+            },
+            {
+              "code": "ScannerUserAgent",
+              "family": "UserAgent",
+              "configuredWeight": 6,
+              "scoreContribution": 6,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold",
+            "suspicious request URI pattern",
+            "known scanner user-agent"
+          ]
+        },
+        {
+          "eventId": "probe-env",
+          "class": "vulnerability_scanning",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 14,
+          "riskSeverity": "Critical",
+          "evidenceScope": "CorrelatedAttackSequence",
+          "evidenceStrength": "Corroborated",
+          "evidenceFamilyCount": 3,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "RepeatedNotFound",
+              "family": "ResponseOutcome",
+              "configuredWeight": 3,
+              "scoreContribution": 3,
+              "contributed": true
+            },
+            {
+              "code": "SuspiciousPathFragment",
+              "family": "PathContent",
+              "configuredWeight": 5,
+              "scoreContribution": 5,
+              "contributed": true
+            },
+            {
+              "code": "UnknownExtension",
+              "family": "ResponseOutcome",
+              "configuredWeight": 2,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "ScannerUserAgent",
+              "family": "UserAgent",
+              "configuredWeight": 6,
+              "scoreContribution": 6,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "multiple 404 responses from the same client IP",
+            "suspicious request URI pattern",
+            "known scanner user-agent"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "traversal-and-encoded-traversal",
+      "class": "directory_traversal",
+      "description": "Literal, percent-encoded, and multiply encoded traversal strings.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "traversal-literal",
+          "class": "directory_traversal",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 7,
+          "riskSeverity": "High",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Supported",
+          "evidenceFamilyCount": 2,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "SuspiciousPathFragment",
+              "family": "PathContent",
+              "configuredWeight": 5,
+              "scoreContribution": 5,
+              "contributed": true
+            },
+            {
+              "code": "UnknownExtension",
+              "family": "ResponseOutcome",
+              "configuredWeight": 2,
+              "scoreContribution": 2,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "suspicious request URI pattern",
+            "request targets file type not seen in site history"
+          ]
+        },
+        {
+          "eventId": "traversal-encoded",
+          "class": "directory_traversal",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 7,
+          "riskSeverity": "High",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Supported",
+          "evidenceFamilyCount": 2,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "SuspiciousPathFragment",
+              "family": "PathContent",
+              "configuredWeight": 5,
+              "scoreContribution": 5,
+              "contributed": true
+            },
+            {
+              "code": "UnknownExtension",
+              "family": "ResponseOutcome",
+              "configuredWeight": 2,
+              "scoreContribution": 2,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "suspicious request URI pattern",
+            "request targets file type not seen in site history"
+          ]
+        },
+        {
+          "eventId": "traversal-double-encoded",
+          "class": "directory_traversal",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 7,
+          "riskSeverity": "High",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Supported",
+          "evidenceFamilyCount": 2,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "SuspiciousPathFragment",
+              "family": "PathContent",
+              "configuredWeight": 5,
+              "scoreContribution": 5,
+              "contributed": true
+            },
+            {
+              "code": "UnknownExtension",
+              "family": "ResponseOutcome",
+              "configuredWeight": 2,
+              "scoreContribution": 2,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "suspicious request URI pattern",
+            "request targets file type not seen in site history"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sql-injection-markers",
+      "class": "sql_injection",
+      "description": "Configured UNION SELECT and time-delay SQL markers.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 2,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 1,
+        "precision": 1,
+        "recall": 0.6667,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0.3333
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "sql-union",
+          "class": "sql_injection",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "sql-sleep",
+          "class": "sql_injection",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 5,
+          "riskSeverity": "High",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousPathFragment",
+              "family": "PathContent",
+              "configuredWeight": 5,
+              "scoreContribution": 5,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "suspicious request URI pattern"
+          ]
+        },
+        {
+          "eventId": "sql-benchmark",
+          "class": "sql_injection",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 5,
+          "riskSeverity": "High",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousPathFragment",
+              "family": "PathContent",
+              "configuredWeight": 5,
+              "scoreContribution": 5,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "suspicious request URI pattern"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "command-injection-markers",
+      "class": "command_injection",
+      "description": "Configured command and shell execution markers in request paths.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "command-cmd",
+          "class": "command_injection",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 7,
+          "riskSeverity": "High",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Supported",
+          "evidenceFamilyCount": 2,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "SuspiciousPathFragment",
+              "family": "PathContent",
+              "configuredWeight": 5,
+              "scoreContribution": 5,
+              "contributed": true
+            },
+            {
+              "code": "UnknownExtension",
+              "family": "ResponseOutcome",
+              "configuredWeight": 2,
+              "scoreContribution": 2,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "suspicious request URI pattern",
+            "request targets file type not seen in site history"
+          ]
+        },
+        {
+          "eventId": "command-powershell",
+          "class": "command_injection",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 6,
+          "riskSeverity": "High",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Supported",
+          "evidenceFamilyCount": 2,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            },
+            {
+              "code": "SuspiciousPathFragment",
+              "family": "PathContent",
+              "configuredWeight": 5,
+              "scoreContribution": 5,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold",
+            "suspicious request URI pattern"
+          ]
+        },
+        {
+          "eventId": "command-exec",
+          "class": "command_injection",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 6,
+          "riskSeverity": "High",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Supported",
+          "evidenceFamilyCount": 2,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            },
+            {
+              "code": "SuspiciousPathFragment",
+              "family": "PathContent",
+              "configuredWeight": 5,
+              "scoreContribution": 5,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold",
+            "suspicious request URI pattern"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "credential-stuffing-like-auth-burst",
+      "class": "credential_stuffing_like",
+      "description": "Repeated authentication failures from one client; the label describes a pattern hypothesis only.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 8,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "credential-attempt-001",
+          "class": "credential_stuffing_like",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "credential-attempt-002",
+          "class": "credential_stuffing_like",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "credential-attempt-003",
+          "class": "credential_stuffing_like",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "credential-attempt-004",
+          "class": "credential_stuffing_like",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "credential-attempt-005",
+          "class": "credential_stuffing_like",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "RepeatedBehavior",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "RepeatedAuthenticationFailure",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "repeated authentication failures from the same client IP"
+          ]
+        },
+        {
+          "eventId": "credential-attempt-006",
+          "class": "credential_stuffing_like",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "RepeatedBehavior",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "RepeatedAuthenticationFailure",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "repeated authentication failures from the same client IP"
+          ]
+        },
+        {
+          "eventId": "credential-attempt-007",
+          "class": "credential_stuffing_like",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "RepeatedBehavior",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "RepeatedAuthenticationFailure",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "repeated authentication failures from the same client IP"
+          ]
+        },
+        {
+          "eventId": "credential-attempt-008",
+          "class": "credential_stuffing_like",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "RepeatedBehavior",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "RepeatedAuthenticationFailure",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "repeated authentication failures from the same client IP"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "high-request-rate",
+      "class": "high_request_rate",
+      "description": "A single source crosses the configured per-IP rate threshold while repeatedly requesting a stable API resource.",
+      "activityStartEventId": "rate-normal-001",
+      "metrics": {
+        "truePositives": 5,
+        "falsePositives": 0,
+        "trueNegatives": 60,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": 0,
+        "falseNegativeRate": 0
+      },
+      "detectionLatencyMilliseconds": 6000,
+      "events": [
+        {
+          "eventId": "rate-normal-001",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-002",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-003",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-004",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-005",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-006",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-007",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-008",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-009",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-010",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-011",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-012",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-013",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-014",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-015",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-016",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-017",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-018",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-019",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-020",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-021",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-022",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-023",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-024",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-025",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-026",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-027",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-028",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-029",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-030",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-031",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-032",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-033",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-034",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-035",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-036",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-037",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-038",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-039",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-040",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-041",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-042",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-043",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-044",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-045",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-046",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-047",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-048",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-049",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-050",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-051",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-052",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-053",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-054",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-055",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-056",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-057",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-058",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-059",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-normal-060",
+          "class": "high_request_rate",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rate-threshold-crossed-001",
+          "class": "high_request_rate",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 2,
+          "riskSeverity": "Medium",
+          "evidenceScope": "RepeatedBehavior",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "HighRequestRate",
+              "family": "TrafficPattern",
+              "configuredWeight": 2,
+              "scoreContribution": 2,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "request rate exceeded the configured threshold"
+          ]
+        },
+        {
+          "eventId": "rate-threshold-crossed-002",
+          "class": "high_request_rate",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 2,
+          "riskSeverity": "Medium",
+          "evidenceScope": "RepeatedBehavior",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "HighRequestRate",
+              "family": "TrafficPattern",
+              "configuredWeight": 2,
+              "scoreContribution": 2,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "request rate exceeded the configured threshold"
+          ]
+        },
+        {
+          "eventId": "rate-threshold-crossed-003",
+          "class": "high_request_rate",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 2,
+          "riskSeverity": "Medium",
+          "evidenceScope": "RepeatedBehavior",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "HighRequestRate",
+              "family": "TrafficPattern",
+              "configuredWeight": 2,
+              "scoreContribution": 2,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "request rate exceeded the configured threshold"
+          ]
+        },
+        {
+          "eventId": "rate-threshold-crossed-004",
+          "class": "high_request_rate",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 2,
+          "riskSeverity": "Medium",
+          "evidenceScope": "RepeatedBehavior",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "HighRequestRate",
+              "family": "TrafficPattern",
+              "configuredWeight": 2,
+              "scoreContribution": 2,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "request rate exceeded the configured threshold"
+          ]
+        },
+        {
+          "eventId": "rate-threshold-crossed-005",
+          "class": "high_request_rate",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 2,
+          "riskSeverity": "Medium",
+          "evidenceScope": "RepeatedBehavior",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "HighRequestRate",
+              "family": "TrafficPattern",
+              "configuredWeight": 2,
+              "scoreContribution": 2,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "request rate exceeded the configured threshold"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "unique-path-enumeration",
+      "class": "unique_path_enumeration",
+      "description": "Enumeration crosses the configured unique normalized path threshold.",
+      "activityStartEventId": "enum-benign-001",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 19,
+        "falseNegatives": 2,
+        "precision": null,
+        "recall": 0,
+        "falsePositiveRate": 0,
+        "falseNegativeRate": 1
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "enum-benign-001",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-002",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-003",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-004",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-005",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-006",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-007",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-008",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-009",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-010",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-011",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-012",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-013",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-014",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-015",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-016",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-017",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-018",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-benign-019",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-crossed-001",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "enum-crossed-002",
+          "class": "unique_path_enumeration",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        }
+      ]
+    },
+    {
+      "id": "slow-reconnaissance",
+      "class": "slow_reconnaissance",
+      "description": "Low-and-slow benign-looking paths from one source, spaced outside short detector windows.",
+      "activityStartEventId": "slow-recon-1",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 4,
+        "precision": null,
+        "recall": 0,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 1
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "slow-recon-1",
+          "class": "slow_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "slow-recon-2",
+          "class": "slow_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "slow-recon-3",
+          "class": "slow_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "slow-recon-4",
+          "class": "slow_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        }
+      ]
+    },
+    {
+      "id": "distributed-reconnaissance",
+      "class": "distributed_reconnaissance",
+      "description": "A sequence-level reconnaissance label spread across five sources, each below local thresholds.",
+      "activityStartEventId": "distributed-recon-001",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 15,
+        "precision": null,
+        "recall": 0,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 1
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "distributed-recon-001",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-002",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-003",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-004",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-005",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-006",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-007",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-008",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-009",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-010",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-011",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-012",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-013",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-014",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "distributed-recon-015",
+          "class": "distributed_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        }
+      ]
+    },
+    {
+      "id": "rotating-source-reconnaissance",
+      "class": "rotating_source_reconnaissance",
+      "description": "Distinct sources make one benign-looking request each, preventing per-IP aggregation.",
+      "activityStartEventId": "rotating-recon-001",
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 8,
+        "precision": null,
+        "recall": 0,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 1
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "rotating-recon-001",
+          "class": "rotating_source_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rotating-recon-002",
+          "class": "rotating_source_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rotating-recon-003",
+          "class": "rotating_source_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rotating-recon-004",
+          "class": "rotating_source_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rotating-recon-005",
+          "class": "rotating_source_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rotating-recon-006",
+          "class": "rotating_source_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rotating-recon-007",
+          "class": "rotating_source_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "rotating-recon-008",
+          "class": "rotating_source_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        }
+      ]
+    },
+    {
+      "id": "scanner-user-agent-spoofed",
+      "class": "spoofed_scanner_user_agent",
+      "description": "A hostile scenario uses a common browser user-agent and paths without configured markers.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 1,
+        "precision": null,
+        "recall": 0,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 1
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "spoofed-scanner",
+          "class": "spoofed_scanner_user_agent",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        }
+      ]
+    },
+    {
+      "id": "scanner-user-agent-missing",
+      "class": "missing_user_agent_reconnaissance",
+      "description": "A hostile-looking but unconfigured path has no user-agent value.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 1,
+        "precision": null,
+        "recall": 0,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 1
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "missing-agent",
+          "class": "missing_user_agent_reconnaissance",
+          "expectedSuspicious": true,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        }
+      ]
+    },
+    {
+      "id": "legitimate-crawler",
+      "class": "legitimate_crawler",
+      "description": "A small crawl of public pages remains below path-scan thresholds.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 8,
+        "falseNegatives": 0,
+        "precision": null,
+        "recall": null,
+        "falsePositiveRate": 0,
+        "falseNegativeRate": null
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "crawler-page-001",
+          "class": "legitimate_crawler",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "crawler-page-002",
+          "class": "legitimate_crawler",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "crawler-page-003",
+          "class": "legitimate_crawler",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "crawler-page-004",
+          "class": "legitimate_crawler",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "crawler-page-005",
+          "class": "legitimate_crawler",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "crawler-page-006",
+          "class": "legitimate_crawler",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "crawler-page-007",
+          "class": "legitimate_crawler",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "crawler-page-008",
+          "class": "legitimate_crawler",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        }
+      ]
+    },
+    {
+      "id": "monitoring-health-checks",
+      "class": "monitoring_system",
+      "description": "Repeated successful health checks from a monitoring agent.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 15,
+        "falseNegatives": 0,
+        "precision": null,
+        "recall": null,
+        "falsePositiveRate": 0,
+        "falseNegativeRate": null
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "monitor-health-001",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-002",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-003",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-004",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-005",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-006",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-007",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-008",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-009",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-010",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-011",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-012",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-013",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-014",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "monitor-health-015",
+          "class": "monitoring_system",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        }
+      ]
+    },
+    {
+      "id": "legitimate-api-client",
+      "class": "api_client",
+      "description": "Frequent requests vary only query strings, which are excluded from unique-path counts.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 0,
+        "trueNegatives": 40,
+        "falseNegatives": 0,
+        "precision": null,
+        "recall": null,
+        "falsePositiveRate": 0,
+        "falseNegativeRate": null
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "api-client-001",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-002",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-003",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-004",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-005",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-006",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-007",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-008",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-009",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-010",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-011",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-012",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-013",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-014",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-015",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-016",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-017",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-018",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-019",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-020",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-021",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-022",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-023",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-024",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-025",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-026",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-027",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-028",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-029",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-030",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-031",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-032",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-033",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-034",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-035",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-036",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-037",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-038",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-039",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        },
+        {
+          "eventId": "api-client-040",
+          "class": "api_client",
+          "expectedSuspicious": false,
+          "detected": false,
+          "riskScore": null,
+          "riskSeverity": null,
+          "evidenceScope": "None",
+          "evidenceStrength": "None",
+          "evidenceFamilyCount": 0,
+          "evidence": [],
+          "riskIndicators": []
+        }
+      ]
+    },
+    {
+      "id": "application-error-burst",
+      "class": "application_generated_error_burst",
+      "description": "A deployment causes repeated 500 responses on a health endpoint; server-side failure is benign ground truth for client abuse.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 0,
+        "falsePositives": 12,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 0,
+        "recall": null,
+        "falsePositiveRate": 1,
+        "falseNegativeRate": null
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "app-error-001",
+          "class": "application_generated_error_burst",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "app-error-002",
+          "class": "application_generated_error_burst",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "app-error-003",
+          "class": "application_generated_error_burst",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "app-error-004",
+          "class": "application_generated_error_burst",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "app-error-005",
+          "class": "application_generated_error_burst",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "app-error-006",
+          "class": "application_generated_error_burst",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "app-error-007",
+          "class": "application_generated_error_burst",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "app-error-008",
+          "class": "application_generated_error_burst",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "app-error-009",
+          "class": "application_generated_error_burst",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "app-error-010",
+          "class": "application_generated_error_burst",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "app-error-011",
+          "class": "application_generated_error_burst",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "app-error-012",
+          "class": "application_generated_error_burst",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ipv4-repeated-not-found",
+      "class": "ipv4_repeated_404",
+      "description": "Three 404s from one IPv4 textual representation reach the repeated-not-found threshold.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "ipv4-404-001",
+          "class": "ipv4_repeated_404",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "ipv4-404-002",
+          "class": "ipv4_repeated_404",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "ipv4-404-003",
+          "class": "ipv4_repeated_404",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 3,
+          "riskSeverity": "Medium",
+          "evidenceScope": "RepeatedBehavior",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "RepeatedNotFound",
+              "family": "ResponseOutcome",
+              "configuredWeight": 3,
+              "scoreContribution": 3,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "multiple 404 responses from the same client IP"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ipv6-repeated-not-found",
+      "class": "ipv6_repeated_404",
+      "description": "Three 404s from one IPv6 textual representation reach the repeated-not-found threshold.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 3,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 1,
+        "recall": 1,
+        "falsePositiveRate": null,
+        "falseNegativeRate": 0
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "ipv6-404-001",
+          "class": "ipv6_repeated_404",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "ipv6-404-002",
+          "class": "ipv6_repeated_404",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "ipv6-404-003",
+          "class": "ipv6_repeated_404",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 3,
+          "riskSeverity": "Medium",
+          "evidenceScope": "RepeatedBehavior",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "RepeatedNotFound",
+              "family": "ResponseOutcome",
+              "configuredWeight": 3,
+              "scoreContribution": 3,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "multiple 404 responses from the same client IP"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "equivalent-ip-representation-split",
+      "class": "equivalent_ip_representations",
+      "description": "Equivalent IPv4-mapped IPv6 and IPv4 strings split the store\u0027s exact-string 404 history.",
+      "activityStartEventId": null,
+      "metrics": {
+        "truePositives": 1,
+        "falsePositives": 2,
+        "trueNegatives": 0,
+        "falseNegatives": 0,
+        "precision": 0.3333,
+        "recall": 1,
+        "falsePositiveRate": 1,
+        "falseNegativeRate": 0
+      },
+      "detectionLatencyMilliseconds": null,
+      "events": [
+        {
+          "eventId": "mapped-404",
+          "class": "equivalent_ip_representations",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "mapped-404-two",
+          "class": "equivalent_ip_representations",
+          "expectedSuspicious": false,
+          "detected": true,
+          "riskScore": 1,
+          "riskSeverity": "Medium",
+          "evidenceScope": "SingleRequest",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 1,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "status code meets configured suspicious threshold"
+          ]
+        },
+        {
+          "eventId": "ipv4-404-third",
+          "class": "equivalent_ip_representations",
+          "expectedSuspicious": true,
+          "detected": true,
+          "riskScore": 3,
+          "riskSeverity": "Medium",
+          "evidenceScope": "RepeatedBehavior",
+          "evidenceStrength": "Limited",
+          "evidenceFamilyCount": 1,
+          "evidence": [
+            {
+              "code": "SuspiciousStatus",
+              "family": "ResponseOutcome",
+              "configuredWeight": 1,
+              "scoreContribution": 0,
+              "contributed": false
+            },
+            {
+              "code": "RepeatedNotFound",
+              "family": "ResponseOutcome",
+              "configuredWeight": 3,
+              "scoreContribution": 3,
+              "contributed": true
+            }
+          ],
+          "riskIndicators": [
+            "multiple 404 responses from the same client IP"
+          ]
+        }
+      ]
+    }
+  ],
+  "comparison": null
+}

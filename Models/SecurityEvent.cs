@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace iisidsd.Models;
 
 public sealed record SecurityEvent(
@@ -17,4 +19,7 @@ public sealed record SecurityEvent(
     IReadOnlyList<string>? RiskIndicators = null)
 {
     public string Id { get; init; } = Guid.NewGuid().ToString("N");
+
+    [JsonIgnore]
+    public long SequenceId { get; init; }
 }

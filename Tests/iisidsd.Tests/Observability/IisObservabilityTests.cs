@@ -54,6 +54,21 @@ public sealed class IisObservabilityTests : IDisposable
     }
 
     [Fact]
+    public void RecordEventProcessed_DoesNotMoveLastTimestampBackForLateEvents()
+    {
+        using var observability = new IisObservability();
+        var latestTimestamp = DateTimeOffset.UtcNow;
+        var laterEvent = new SecurityEvent(latestTimestamp, "server01", "example.test", "GET", "/", "203.0.113.10", 200,
+            "test-agent", new Dictionary<string, string>());
+        var delayedEvent = laterEvent with { Timestamp = latestTimestamp.AddMinutes(-1) };
+
+        observability.RecordEventProcessed(laterEvent);
+        observability.RecordEventProcessed(delayedEvent);
+
+        Assert.Equal(latestTimestamp, observability.LastEventTimestamp);
+    }
+
+    [Fact]
     public void SqliteHealthProbe_ReportsConnectionStatus()
     {
         Directory.CreateDirectory(_rootPath);

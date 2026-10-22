@@ -61,7 +61,7 @@ public sealed class IisSiteDiscoveryService(ILogger<IisSiteDiscoveryService> log
         return parts.Length >= 3 ? NormalizeDomain(parts[2]) : string.Empty;
     }
 
-    private static string NormalizeDomain(string domain)
+    internal static string NormalizeDomain(string domain)
     {
         var value = domain.Trim().TrimEnd('.');
         var colonIndex = value.LastIndexOf(':');

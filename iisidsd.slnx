@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/Tests/">
+    <Project Path="Tests/DetectionEvaluation/DetectionEvaluation.csproj" />
     <Project Path="Tests/iisidsd.Tests/iisidsd.Tests.csproj" />
+    <Project Path="Tests/iisidsd.Performance/iisidsd.Performance.csproj" />
   </Folder>
   <Project Path="iisidsd.csproj" />
 </Solution>

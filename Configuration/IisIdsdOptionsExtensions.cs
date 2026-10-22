@@ -18,6 +18,20 @@ public static class IisIdsdOptionsExtensions
             .Validate(options => options.ProviderId != Guid.Empty, "IisEtw:ProviderId must not be empty.")
             .ValidateOnStart();
 
+        services.AddOptions<TrustedProxyOptions>()
+            .Bind(configuration.GetSection(TrustedProxyOptions.SectionName))
+            .ValidateDataAnnotations()
+            .Validate(options => options.TryGetCanonicalProxies(out _),
+                "TrustedProxies must contain valid exact IP addresses and must list at least one address when enabled.")
+            .ValidateOnStart();
+
+        services.AddOptions<DashboardOptions>()
+            .Bind(configuration.GetSection(DashboardOptions.SectionName))
+            .ValidateDataAnnotations()
+            .Validate(options => options.TryGetCanonicalAllowedHosts(out _),
+                "Dashboard:AllowedHosts must contain valid hostnames or exact IP addresses without ports or wildcards.")
+            .ValidateOnStart();
+
         services.AddOptions<DetectionOptions>()
             .Bind(configuration.GetSection(DetectionOptions.SectionName))
             .ValidateDataAnnotations()
@@ -40,6 +54,8 @@ public static class IisIdsdOptionsExtensions
         services.AddOptions<IisAdminOptions>()
             .Bind(configuration.GetSection(IisAdminOptions.SectionName))
             .ValidateDataAnnotations()
+            .Validate(options => IisAdminOptions.IsValidEnforcementMode(options.EnforcementMode),
+                "IisAdmin:EnforcementMode must be Observe, Simulate, or Enforce.")
             .Validate(options => IisIpAllowList.IsValidAllowList(options.AllowList),
                 "IisAdmin:AllowList must contain only valid IP addresses or CIDR ranges.")
             .ValidateOnStart();

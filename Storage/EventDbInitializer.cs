@@ -10,23 +10,27 @@ public sealed class EventDbInitializer(
     IFindingStore findingStore,
     ILogger<EventDbInitializer> logger) : IHostedService
 {
+    private const int CurrentSchemaVersion = 3;
     private readonly string _databasePath = GetDatabasePath(hostEnvironment.ContentRootPath, storageOptions.Value.DatabasePath);
     private readonly IFindingStore _findingStore = findingStore;
     private readonly ILogger<EventDbInitializer> _logger = logger;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
-
-        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        using var connection = SqliteConnectionFactory.Open(_databasePath, storageOptions.Value);
+        SqliteConnectionFactory.ConfigureJournalMode(connection, storageOptions.Value);
+        var schemaVersion = GetSchemaVersion(connection);
+        if (schemaVersion > CurrentSchemaVersion)
         {
-            DataSource = _databasePath,
-            Mode = SqliteOpenMode.ReadWriteCreate
-        }.ToString());
-        connection.Open();
+            throw new InvalidOperationException(
+                $"Database schema version {schemaVersion} is newer than the supported version {CurrentSchemaVersion}.");
+        }
+
+        using var transaction = connection.BeginTransaction();
 
         using (var command = connection.CreateCommand())
         {
+            command.Transaction = transaction;
             command.CommandText = """
                 CREATE TABLE IF NOT EXISTS events (
                     sequence_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +53,42 @@ public sealed class EventDbInitializer(
 
                 CREATE INDEX IF NOT EXISTS ix_events_timestamp_utc ON events(timestamp_utc DESC);
                 CREATE INDEX IF NOT EXISTS ix_events_client_ip ON events(client_ip);
-                CREATE INDEX IF NOT EXISTS ix_events_is_suspicious ON events(is_suspicious, timestamp_utc DESC);
+                CREATE INDEX IF NOT EXISTS ix_events_domain_sequence ON events(domain, sequence_id DESC);
+                CREATE INDEX IF NOT EXISTS ix_events_suspicious_sequence ON events(is_suspicious, sequence_id DESC);
+                DROP INDEX IF EXISTS ix_events_is_suspicious;
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_events_event_id ON events(event_id);
+
+                CREATE TABLE IF NOT EXISTS event_retention_state (
+                    singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+                    retained_event_count INTEGER NOT NULL,
+                    pruned_through_sequence INTEGER NOT NULL DEFAULT 0);
+
+                INSERT OR IGNORE INTO event_retention_state (singleton_id, retained_event_count)
+                SELECT 1, COUNT(*) FROM events;
+
+                CREATE TRIGGER IF NOT EXISTS trg_events_retention_insert
+                AFTER INSERT ON events
+                BEGIN
+                    UPDATE event_retention_state
+                    SET retained_event_count = retained_event_count + 1
+                    WHERE singleton_id = 1;
+                END;
+
+                CREATE TABLE IF NOT EXISTS etw_ingestion_diagnostics (
+                    singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+                    events_received INTEGER NOT NULL DEFAULT 0,
+                    events_accepted INTEGER NOT NULL DEFAULT 0,
+                    events_dropped INTEGER NOT NULL DEFAULT 0,
+                    events_malformed INTEGER NOT NULL DEFAULT 0,
+                    events_processed INTEGER NOT NULL DEFAULT 0,
+                    processing_failures INTEGER NOT NULL DEFAULT 0,
+                    auto_deny_failures INTEGER NOT NULL DEFAULT 0,
+                    processing_retries INTEGER NOT NULL DEFAULT 0,
+                    updated_utc TEXT NOT NULL
+                );
+
+                INSERT OR IGNORE INTO etw_ingestion_diagnostics (singleton_id, updated_utc)
+                VALUES (1, '1970-01-01T00:00:00.0000000Z');
 
                 CREATE TABLE IF NOT EXISTS ip_findings (
                     client_ip TEXT PRIMARY KEY COLLATE NOCASE,
@@ -86,6 +125,8 @@ public sealed class EventDbInitializer(
 
                 CREATE INDEX IF NOT EXISTS ix_ip_finding_domains_domain
                     ON ip_finding_domains(domain, highest_risk_score DESC, suspicious_count DESC, last_seen DESC);
+                CREATE INDEX IF NOT EXISTS ix_ip_finding_domains_last_seen_client_ip
+                    ON ip_finding_domains(last_seen, client_ip);
 
                 CREATE TABLE IF NOT EXISTS iis_deny_list_audit (
                     audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,11 +156,48 @@ public sealed class EventDbInitializer(
 
                 CREATE INDEX IF NOT EXISTS ix_iis_temporary_denies_expiry
                     ON iis_temporary_denies(expires_utc);
+
+                CREATE TABLE IF NOT EXISTS iis_managed_denies (
+                    site_name TEXT NOT NULL COLLATE NOCASE,
+                    client_ip TEXT NOT NULL COLLATE NOCASE,
+                    expires_utc TEXT NULL,
+                    state TEXT NOT NULL,
+                    audit_id INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (site_name, client_ip)
+                );
+
+                CREATE TABLE IF NOT EXISTS analyst_incidents (
+                    client_ip TEXT PRIMARY KEY COLLATE NOCASE,
+                    status TEXT NOT NULL CHECK (status IN ('open', 'acknowledged', 'suppressed', 'resolved')),
+                    note TEXT NOT NULL DEFAULT '',
+                    updated_utc TEXT NOT NULL,
+                    updated_by TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_analyst_incidents_updated
+                    ON analyst_incidents(updated_utc DESC);
+
+                CREATE INDEX IF NOT EXISTS ix_iis_managed_denies_state
+                    ON iis_managed_denies(state, expires_utc);
+
+                INSERT OR IGNORE INTO iis_managed_denies (
+                    site_name, client_ip, expires_utc, state, audit_id)
+                SELECT site_name, client_ip, expires_utc, 'active', 0
+                FROM iis_temporary_denies;
                 """;
             command.ExecuteNonQuery();
         }
 
-        EnsureBanCountSchema(connection);
+        EnsureEventRetentionCursorSchema(connection, transaction);
+        EnsureBanCountSchema(connection, transaction);
+        using (var versionCommand = connection.CreateCommand())
+        {
+            versionCommand.Transaction = transaction;
+            versionCommand.CommandText = $"PRAGMA user_version = {CurrentSchemaVersion};";
+            versionCommand.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
 
         var backfilledEvents = _findingStore.BackfillFromExistingEvents();
         if (backfilledEvents > 0)
@@ -133,11 +211,61 @@ public sealed class EventDbInitializer(
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    private static void EnsureBanCountSchema(SqliteConnection connection)
+    private static void EnsureEventRetentionCursorSchema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var hasPrunedCursor = false;
+        using (var columnCheck = connection.CreateCommand())
+        {
+            columnCheck.Transaction = transaction;
+            columnCheck.CommandText = "PRAGMA table_info(event_retention_state);";
+            using var reader = columnCheck.ExecuteReader();
+            while (reader.Read())
+            {
+                if (string.Equals(reader.GetString(1), "pruned_through_sequence", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasPrunedCursor = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasPrunedCursor)
+        {
+            using var alterCommand = connection.CreateCommand();
+            alterCommand.Transaction = transaction;
+            alterCommand.CommandText = "ALTER TABLE event_retention_state ADD COLUMN pruned_through_sequence INTEGER NOT NULL DEFAULT 0;";
+            alterCommand.ExecuteNonQuery();
+        }
+
+        using var triggerCommand = connection.CreateCommand();
+        triggerCommand.Transaction = transaction;
+        triggerCommand.CommandText = """
+            DROP TRIGGER IF EXISTS trg_events_retention_delete;
+            CREATE TRIGGER trg_events_retention_delete
+            AFTER DELETE ON events
+            BEGIN
+                UPDATE event_retention_state
+                SET retained_event_count = retained_event_count - 1,
+                    pruned_through_sequence = MAX(pruned_through_sequence, OLD.sequence_id)
+                WHERE singleton_id = 1;
+            END;
+            """;
+        triggerCommand.ExecuteNonQuery();
+    }
+
+    private static int GetSchemaVersion(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA user_version;";
+        return Convert.ToInt32(command.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static void EnsureBanCountSchema(SqliteConnection connection, SqliteTransaction transaction)
     {
         var hasBanCountsTable = false;
         using (var tableCheck = connection.CreateCommand())
         {
+            tableCheck.Transaction = transaction;
             tableCheck.CommandText = """
                 SELECT 1
                 FROM sqlite_master
@@ -149,13 +277,14 @@ public sealed class EventDbInitializer(
 
         if (!hasBanCountsTable)
         {
-            CreateBanCountsTable(connection);
+            CreateBanCountsTable(connection, transaction);
             return;
         }
 
         var hasDomainColumn = false;
         using (var columnCheck = connection.CreateCommand())
         {
+            columnCheck.Transaction = transaction;
             columnCheck.CommandText = "PRAGMA table_info(ban_counts);";
             using var reader = columnCheck.ExecuteReader();
             while (reader.Read())
@@ -171,6 +300,7 @@ public sealed class EventDbInitializer(
         if (!hasDomainColumn)
         {
             using var migrate = connection.CreateCommand();
+            migrate.Transaction = transaction;
             migrate.CommandText = """
                 ALTER TABLE ban_counts RENAME TO ban_counts_legacy;
 
@@ -191,12 +321,13 @@ public sealed class EventDbInitializer(
             migrate.ExecuteNonQuery();
         }
 
-        CreateBanCountIndexes(connection);
+        CreateBanCountIndexes(connection, transaction);
     }
 
-    private static void CreateBanCountsTable(SqliteConnection connection)
+    private static void CreateBanCountsTable(SqliteConnection connection, SqliteTransaction transaction)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             CREATE TABLE ban_counts (
                 client_ip TEXT NOT NULL,
@@ -207,12 +338,13 @@ public sealed class EventDbInitializer(
             );
             """;
         command.ExecuteNonQuery();
-        CreateBanCountIndexes(connection);
+        CreateBanCountIndexes(connection, transaction);
     }
 
-    private static void CreateBanCountIndexes(SqliteConnection connection)
+    private static void CreateBanCountIndexes(SqliteConnection connection, SqliteTransaction transaction)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             CREATE INDEX IF NOT EXISTS ix_ban_counts_ban_count ON ban_counts(ban_count DESC, last_updated_utc DESC);
             CREATE INDEX IF NOT EXISTS ix_ban_counts_domain_client_ip ON ban_counts(domain, client_ip);

@@ -33,12 +33,18 @@
     <button class="domain-chip active" type="button" data-domain="*">All domains</button>
   </nav>
 
-  <nav class="view-tabs" aria-label="Dashboard views">
-    <button class="tab active" type="button" data-view="events">Live events</button>
-    <button class="tab" type="button" data-view="findings">Findings</button>
-    <button class="tab" type="button" data-view="details">IP details</button>
-    <button class="tab" type="button" data-view="iis">IIS deny list</button>
-    <button class="tab" type="button" data-view="configuration">System configuration</button>
+  <section class="system-health" id="system-health" aria-label="System health">
+    <span class="health-indicator" id="database-health" data-state="checking">Database health: checking</span>
+    <span class="health-indicator" id="ingestion-health" data-state="checking">Ingestion health: checking</span>
+    <span class="health-indicator" id="data-freshness" data-state="checking">Data freshness: checking</span>
+  </section>
+
+  <nav class="view-tabs" role="tablist" aria-label="Dashboard views">
+    <button class="tab active" id="tab-events" role="tab" aria-selected="true" aria-controls="events-view" type="button" data-view="events">Live events</button>
+    <button class="tab" id="tab-findings" role="tab" aria-selected="false" aria-controls="findings-view" type="button" data-view="findings">Findings</button>
+    <button class="tab" id="tab-details" role="tab" aria-selected="false" aria-controls="details-view" type="button" data-view="details">IP details</button>
+    <button class="tab" id="tab-iis" role="tab" aria-selected="false" aria-controls="iis-view" type="button" data-view="iis">IIS deny list</button>
+    <button class="tab" id="tab-configuration" role="tab" aria-selected="false" aria-controls="configuration-view" type="button" data-view="configuration">System configuration</button>
   </nav>
 
   <main>
@@ -51,13 +57,30 @@
         <input id="all-events" type="checkbox">
         Show non-suspicious events
       </label>
+      <label class="compact-filter" for="event-status-filter">
+        <span>Response</span>
+        <select id="event-status-filter">
+          <option value="all">All</option>
+          <option value="suspicious">Suspicious</option>
+          <option value="not-found">404</option>
+          <option value="errors">4xx / 5xx</option>
+        </select>
+      </label>
+      <label class="compact-filter" for="event-time-filter">
+        <span>Window</span>
+        <select id="event-time-filter">
+          <option value="all">Loaded history</option>
+          <option value="1h">Last hour</option>
+          <option value="24h">Last 24 hours</option>
+        </select>
+      </label>
       <button class="button button-secondary" id="pause-events" type="button" aria-pressed="false">
         Pause live updates
       </button>
       <span class="workspace-hint" id="stream-hint">Live stream reconnects automatically.</span>
     </div>
 
-    <section id="events-view" class="view active panel" aria-label="Live events">
+    <section id="events-view" class="view active panel" role="tabpanel" aria-labelledby="tab-events" aria-label="Live events">
       <div class="panel-heading">
         <div>
           <h2>Live events</h2>
@@ -66,6 +89,7 @@
       </div>
       <div class="table-wrap">
         <table>
+          <caption class="visually-hidden">Recent IIS requests and detector assessments</caption>
           <thead>
             <tr>
               <th>Time</th><th>Client</th><th>Requests</th><th>Suspicious</th><th>Risk</th>
@@ -77,14 +101,24 @@
       </div>
     </section>
 
-    <section id="findings-view" class="view panel" aria-label="IP findings">
+    <section id="findings-view" class="view panel" role="tabpanel" aria-labelledby="tab-findings" aria-label="Incident queue">
       <div class="panel-heading">
         <div>
-          <h2>Findings</h2>
-          <p>Aggregated suspicious activity by client IP.</p>
+          <h2>Incident queue</h2>
+          <p>Prioritized heuristic findings by source address. Findings are not confirmed compromises.</p>
         </div>
         <div class="finding-bulk-controls">
           <span id="selection-count" class="muted">0 selected</span>
+          <label class="compact-filter" for="incident-status-filter">
+            <span>State</span>
+            <select id="incident-status-filter">
+              <option value="all">All states</option>
+              <option value="open">Open</option>
+              <option value="acknowledged">Acknowledged</option>
+              <option value="suppressed">Suppressed</option>
+              <option value="resolved">Resolved</option>
+            </select>
+          </label>
           <button class="button button-secondary" id="select-visible" type="button">Select visible</button>
           <button class="button button-danger" id="bulk-deny-selected" type="button" disabled>Deny selected</button>
         </div>
@@ -109,10 +143,11 @@
       <p class="chart-footnote" id="chart-footnote"></p>
       <div class="table-wrap">
         <table>
+          <caption class="visually-hidden">Prioritized incident findings by source address, activity, severity, sites, and evidence</caption>
           <thead>
             <tr>
               <th>Time</th><th>Client</th><th>Requests</th><th>Suspicious</th><th>Risk</th>
-              <th>Ban count</th><th>Domain(s)</th><th>Path</th><th>Detection reasons</th>
+              <th>Ban count</th><th>Affected sites</th><th>Evidence</th><th>Detection reasons</th>
             </tr>
           </thead>
           <tbody id="findings"><tr><td colspan="9" class="empty">Waiting for suspicious IP findings...</td></tr></tbody>
@@ -120,7 +155,7 @@
       </div>
     </section>
 
-    <section id="details-view" class="view panel" aria-label="Selected IP details">
+    <section id="details-view" class="view panel" role="tabpanel" aria-labelledby="tab-details" aria-label="Selected IP details">
       <div class="panel-heading">
         <div>
           <h2>IP detail</h2>
@@ -128,9 +163,13 @@
         </div>
       </div>
       <div class="summary" id="finding-summary">Select a finding to inspect its recent events.</div>
+      <section class="investigation-block" aria-labelledby="observed-facts-heading">
+        <h3 id="observed-facts-heading">Observed facts</h3>
+        <div class="fact-list" id="finding-observed-facts"><span class="muted">No finding selected.</span></div>
+      </section>
       <div class="risk-details">
         <div>
-          <h3>Risk indicators</h3>
+          <h3>Detector interpretation <span class="muted">Heuristic evidence, not a compromise verdict</span></h3>
           <div class="indicator-list" id="finding-risk-indicators"><span class="muted">No finding selected.</span></div>
         </div>
         <div>
@@ -138,6 +177,31 @@
           <div class="indicator-list" id="finding-reasons"><span class="muted">No finding selected.</span></div>
         </div>
       </div>
+      <section class="analyst-panel" aria-labelledby="analyst-heading">
+        <div class="analyst-heading">
+          <div>
+            <h3 id="analyst-heading">Analyst conclusion</h3>
+            <p>Shared analyst state is stored by the service and visible to authorized administrators.</p>
+          </div>
+          <label for="incident-state">State</label>
+          <select id="incident-state">
+            <option value="open">Open</option>
+            <option value="acknowledged">Acknowledged</option>
+            <option value="suppressed">Suppressed</option>
+            <option value="resolved">Resolved</option>
+          </select>
+        </div>
+        <label for="analyst-note">Analyst note</label>
+        <textarea id="analyst-note" maxlength="4000" rows="3" placeholder="Record context or disposition. Do not treat detector output as confirmation."></textarea>
+        <div class="analyst-actions">
+          <button class="button button-secondary" id="incident-state-save" type="button">Save state and note</button>
+          <span id="incident-state-status" role="status" aria-live="polite"></span>
+        </div>
+      </section>
+      <section class="related-findings" aria-labelledby="related-findings-heading">
+        <h3 id="related-findings-heading">Related findings <span class="muted">Same affected site(s)</span></h3>
+        <div id="related-findings-list" class="related-list"><span class="muted">No finding selected.</span></div>
+      </section>
       <div class="actions">
         <label for="ban-count-value">Ban count</label>
         <input id="ban-count-value" type="number" min="0" step="1" value="0">
@@ -148,6 +212,7 @@
       </div>
       <div class="table-wrap">
         <table>
+          <caption class="visually-hidden">Supporting requests for the selected finding</caption>
           <thead>
             <tr>
               <th>Time</th><th>Client</th><th>Requests</th><th>Suspicious</th><th>Risk</th>
@@ -159,7 +224,7 @@
       </div>
     </section>
 
-    <section id="iis-view" class="view panel" aria-label="IIS deny list">
+    <section id="iis-view" class="view panel" role="tabpanel" aria-labelledby="tab-iis" aria-label="IIS deny list">
       <div class="panel-heading">
         <div>
           <h2>IIS deny list</h2>
@@ -195,7 +260,7 @@
       </div>
     </section>
 
-    <section id="configuration-view" class="view panel" aria-label="System configuration">
+    <section id="configuration-view" class="view panel" role="tabpanel" aria-labelledby="tab-configuration" aria-label="System configuration">
       <div class="panel-heading">
         <div>
           <h2>System configuration</h2>
@@ -205,7 +270,7 @@
       <div class="summary configuration-guidance" id="configuration-guidance">
         Changes are saved beside iisidsd.exe and require a service restart to take effect. Secret-bearing settings such as certificate passwords are not shown or modified. Environment variables and command-line settings may override this file.
         <br><br>
-        These settings can affect listener exposure, event retention, ETW capture, and IIS deny-list actions. The existing administrator access policy protects this editor; an elevated service grants local loopback clients administrator API access.
+        These settings can affect listener exposure, event retention, ETW capture, and IIS deny-list actions. Configuration reads and writes require an authenticated Windows Administrator, including on loopback. Service elevation and loopback origin do not grant caller trust.
       </div>
       <label class="configuration-label" for="configuration-editor">Editable appsettings.json sections</label>
       <textarea id="configuration-editor" class="configuration-editor" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="configuration-guidance"></textarea>
@@ -215,7 +280,26 @@
         <span id="configuration-status" role="status" aria-live="polite">Select this tab to load the saved settings.</span>
       </div>
     </section>
+
+    <dialog id="bulk-deny-dialog" class="review-dialog" aria-labelledby="bulk-deny-title" aria-describedby="bulk-deny-description">
+      <form method="dialog" class="review-dialog-form">
+        <div class="panel-heading">
+          <div>
+            <h2 id="bulk-deny-title">Review bulk deny-list action</h2>
+            <p id="bulk-deny-description">Confirm the affected sources and mode before sending any requests.</p>
+          </div>
+          <button class="button button-quiet" type="button" id="bulk-deny-close" aria-label="Close bulk action review">Close</button>
+        </div>
+        <div class="review-mode" id="bulk-deny-mode"></div>
+        <ol class="bulk-preview-list" id="bulk-deny-preview"></ol>
+        <div class="review-actions">
+          <button class="button button-secondary" type="button" id="bulk-deny-cancel">Cancel</button>
+          <button class="button button-danger" type="button" id="bulk-deny-confirm">Confirm action</button>
+        </div>
+      </form>
+    </dialog>
   </main>
+  <script src="/dashboard-model.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

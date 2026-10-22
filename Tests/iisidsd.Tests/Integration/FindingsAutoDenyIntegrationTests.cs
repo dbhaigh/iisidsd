@@ -88,11 +88,16 @@ public sealed class FindingsAutoDenyIntegrationTests
             Assert.Contains("example.test", finding.Domains);
             Assert.Contains("known scanner user-agent", finding.RiskIndicators);
 
-            var audit = Assert.Single(services.GetRequiredService<IDenyListStore>().GetRecentAudit(10));
-            Assert.Equal("system:auto-deny", audit.Actor);
-            Assert.Equal("add", audit.Action);
-            Assert.Equal("dry-run", audit.Outcome);
-            Assert.True(audit.DryRun);
+            var audits = services.GetRequiredService<IDenyListStore>().GetRecentAudit(10);
+            Assert.Equal(2, audits.Count);
+            Assert.All(audits, audit =>
+            {
+                Assert.Equal("system:auto-deny", audit.Actor);
+                Assert.Equal("add", audit.Action);
+                Assert.True(audit.DryRun);
+            });
+            Assert.Contains(audits, audit => audit.Outcome == "requested");
+            Assert.Contains(audits, audit => audit.Outcome == "simulated");
             Assert.Empty(appCmd.Calls);
         }
         finally

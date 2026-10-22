@@ -1,0 +1,7 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "dotnet test": true,
+        "sqlite3": true,
+        "dotnet build": true
+    }
+}

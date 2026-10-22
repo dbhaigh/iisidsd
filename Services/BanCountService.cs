@@ -11,6 +11,7 @@ public sealed class BanCountService(
     IOptions<StorageOptions> storageOptions,
     IHostEnvironment hostEnvironment) : IBanCountService
 {
+    private const int MaximumBanCountListLimit = 500;
     private readonly string _databasePath = GetDatabasePath(hostEnvironment.ContentRootPath, storageOptions.Value.DatabasePath);
     private readonly Lock _sync = new();
     private readonly Lock _writeSync = SqliteDatabaseLock.For(
@@ -18,7 +19,7 @@ public sealed class BanCountService(
 
     public IReadOnlyList<BanCountRecord> GetBanCounts(int limit, string? domain = null)
     {
-        limit = Math.Max(1, limit);
+        limit = Math.Clamp(limit, 1, MaximumBanCountListLimit);
         var normalizedDomain = NormalizeDomainKey(domain);
         var results = new List<BanCountRecord>();
 
@@ -63,6 +64,7 @@ public sealed class BanCountService(
         var ips = clientIps
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaximumBanCountListLimit)
             .ToArray();
         if (ips.Length == 0)
         {
@@ -167,7 +169,9 @@ public sealed class BanCountService(
         lock (_writeSync)
         {
             using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction();
             using var command = connection.CreateCommand();
+            command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO ban_counts (client_ip, domain, ban_count, last_updated_utc)
                 VALUES ($clientIp, $domain, $banCount, $lastUpdatedUtc)
@@ -180,7 +184,8 @@ public sealed class BanCountService(
             command.Parameters.AddWithValue("$banCount", updated.BanCount);
             command.Parameters.AddWithValue("$lastUpdatedUtc", updated.LastUpdated.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
             command.ExecuteNonQuery();
-            UpdateFindingBanCount(connection, transaction: null, clientIp: clientIp);
+            UpdateFindingBanCount(connection, transaction, clientIp);
+            transaction.Commit();
         }
 
         return updated;
@@ -231,16 +236,7 @@ public sealed class BanCountService(
     }
 
     private SqliteConnection OpenConnection()
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(_databasePath)!);
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = _databasePath,
-            Mode = SqliteOpenMode.ReadWriteCreate
-        }.ToString());
-        connection.Open();
-        return connection;
-    }
+        => SqliteConnectionFactory.Open(_databasePath, storageOptions.Value);
 
     private static BanCountRecord ReadRecord(SqliteDataReader reader)
         => new(

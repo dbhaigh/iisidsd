@@ -1,5 +1,6 @@
 using System.Net;
 using iisidsd.Configuration;
+using iisidsd.Networking;
 using Microsoft.Extensions.Options;
 
 namespace iisidsd.Iis;
@@ -15,7 +16,7 @@ public sealed class IisIpAllowList : IIpAllowList
 
     public bool Contains(string? clientIp)
     {
-        if (!IPAddress.TryParse(clientIp, out var address))
+        if (!TryNormalizeAddress(clientIp, out var canonicalAddress) || !IPAddress.TryParse(canonicalAddress, out var address))
         {
             return false;
         }
@@ -46,6 +47,17 @@ public sealed class IisIpAllowList : IIpAllowList
         }
     }
 
+    public static bool TryNormalizeAddress(string? value, out string canonicalAddress)
+    {
+        if (value?.Contains('%') == true || !IpAddressNormalizer.TryNormalize(value, out canonicalAddress))
+        {
+            canonicalAddress = string.Empty;
+            return false;
+        }
+
+        return true;
+    }
+
     private static AddressRange ParseRange(string configuredRange)
     {
         if (string.IsNullOrWhiteSpace(configuredRange))
@@ -57,7 +69,7 @@ public sealed class IisIpAllowList : IIpAllowList
         var separator = value.LastIndexOf('/');
         var hasPrefix = separator >= 0;
         var addressText = hasPrefix ? value[..separator] : value;
-        if (!IPAddress.TryParse(addressText, out var address))
+        if (addressText.Contains('%') || !IPAddress.TryParse(addressText, out var address))
         {
             throw new ArgumentException($"Invalid IP address or CIDR in IisAdmin:AllowList: '{configuredRange}'.");
         }
@@ -65,7 +77,8 @@ public sealed class IisIpAllowList : IIpAllowList
         var prefixLength = address.GetAddressBytes().Length * 8;
         if (hasPrefix)
         {
-            if (!int.TryParse(value[(separator + 1)..], out prefixLength) ||
+                if (!int.TryParse(value[(separator + 1)..], System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out prefixLength) ||
                 prefixLength < 0 ||
                 prefixLength > address.GetAddressBytes().Length * 8)
             {
@@ -80,6 +93,16 @@ public sealed class IisIpAllowList : IIpAllowList
             {
                 prefixLength -= 96;
             }
+        }
+        else if (address.IsIPv4MappedToIPv6)
+        {
+            throw new ArgumentException($"IPv4-mapped IPv6 CIDR prefixes shorter than /96 are ambiguous: '{configuredRange}'.");
+        }
+
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+            !IpAddressNormalizer.TryNormalize(addressText, out _))
+        {
+            throw new ArgumentException($"Invalid IP address or CIDR in IisAdmin:AllowList: '{configuredRange}'.");
         }
 
         return new AddressRange(address.GetAddressBytes(), prefixLength);

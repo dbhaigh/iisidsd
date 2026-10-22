@@ -225,6 +225,32 @@ p {
   padding: 10px clamp(16px, 3vw, 36px) 0;
 }
 
+.system-health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 9px clamp(16px, 3vw, 36px) 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.health-indicator::before {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+  vertical-align: 1px;
+}
+
+.health-indicator[data-state="ok"] { color: var(--good); }
+.health-indicator[data-state="warning"],
+.health-indicator[data-state="degraded"] { color: var(--warning); }
+.health-indicator[data-state="restricted"] { color: var(--muted); }
+
 .notice {
   display: flex;
   align-items: flex-start;
@@ -389,6 +415,25 @@ input[type="checkbox"] {
   font-size: 12px;
 }
 
+.compact-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.compact-filter select,
+.analyst-heading select {
+  min-height: 34px;
+  max-width: 190px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--page);
+  color: var(--text);
+}
+
 .workspace-hint {
   margin-left: auto;
 }
@@ -399,6 +444,10 @@ input[type="checkbox"] {
 
 .view.active {
   display: flex;
+}
+
+.view[hidden] {
+  display: none;
 }
 
 .panel {
@@ -530,6 +579,38 @@ tr.selected {
   margin: 0 8px 0 0;
   vertical-align: middle;
 }
+
+.finding-open {
+  min-height: 0;
+  padding: 2px 3px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--accent);
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.finding-open:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--surface-hover);
+}
+
+.incident-badge {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: capitalize;
+}
+
+.incident-badge.acknowledged { color: var(--accent); }
+.incident-badge.suppressed { color: var(--warning); }
+.incident-badge.resolved { color: var(--good); }
 
 .empty {
   padding: 34px;
@@ -666,6 +747,41 @@ tr.selected {
   font-size: 17px;
 }
 
+.investigation-block,
+.related-findings {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.investigation-block h3,
+.related-findings h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.fact-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 18px;
+}
+
+.fact-item {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.fact-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.fact-item strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .risk-details {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -694,6 +810,118 @@ tr.selected {
   background: var(--surface-raised);
   color: var(--text);
   font-size: 12px;
+}
+
+.indicator-explanation {
+  min-width: 190px;
+  max-width: 420px;
+  display: grid;
+  gap: 5px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.indicator-explanation > span { color: var(--muted); }
+.indicator-explanation .indicator-weight { color: var(--warning); font-size: 11px; }
+
+.analyst-panel {
+  display: grid;
+  gap: 9px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.analyst-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px 14px;
+}
+
+.analyst-heading > div { margin-right: auto; }
+.analyst-heading h3 { margin: 0 0 4px; font-size: 13px; }
+.analyst-heading p { margin: 0; color: var(--muted); font-size: 12px; }
+.analyst-panel > label,
+.analyst-heading > label { color: var(--muted); font-size: 12px; }
+
+.analyst-panel textarea {
+  width: 100%;
+  min-height: 76px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--page);
+  color: var(--text);
+  resize: vertical;
+}
+
+.analyst-actions,
+.related-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.related-findings > h3 .muted { font-weight: 400; }
+
+.related-finding-link {
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-raised);
+  font-size: 12px;
+  text-align: left;
+}
+
+.review-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(82vh, 760px);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.review-dialog::backdrop { background: rgb(0 0 0 / 62%); }
+.review-dialog-form { display: grid; max-height: inherit; }
+.review-dialog .panel-heading { padding: 15px 18px; }
+.review-mode { padding: 12px 18px; color: var(--warning); font-size: 13px; }
+
+.bulk-preview-list {
+  min-height: 60px;
+  max-height: 48vh;
+  margin: 0;
+  padding: 0 18px 0 44px;
+  overflow: auto;
+}
+
+.bulk-preview-list li {
+  display: grid;
+  gap: 4px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.bulk-preview-list li span { color: var(--muted); overflow-wrap: anywhere; }
+.review-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .actions {
@@ -776,7 +1004,8 @@ tr.selected {
   }
 
   .chart-grid,
-  .risk-details {
+  .risk-details,
+  .fact-list {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -797,6 +1026,14 @@ tr.selected {
   .finding-bulk-controls button {
     flex: 1 1 auto;
   }
+
+  .system-health { gap: 7px 12px; }
+  .system-health > span { flex-basis: 100%; }
+  .compact-filter { justify-content: space-between; }
+  .compact-filter select { max-width: 150px; }
+  .analyst-heading { align-items: flex-start; }
+  .analyst-heading > div { flex-basis: 100%; }
+  .review-actions { flex-direction: column-reverse; }
 
   .actions > * {
     max-width: 100%;

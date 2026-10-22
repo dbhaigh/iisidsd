@@ -16,4 +16,26 @@ public sealed record StoredSecurityEvent(
     string? DetectionReason,
     int RiskScore,
     string RiskSeverity,
-    IReadOnlyList<string> RiskIndicators);
+    IReadOnlyList<string> RiskIndicators)
+{
+    public SecurityEvent ToSecurityEvent()
+        => new(
+            Timestamp,
+            Server,
+            Domain,
+            Method,
+            Path,
+            ClientIp,
+            StatusCode,
+            UserAgent,
+            Properties,
+            IsSuspicious,
+            DetectionReason,
+            RiskScore,
+            RiskSeverity,
+            RiskIndicators)
+        {
+            Id = EventId,
+            SequenceId = SequenceId
+        };
+}

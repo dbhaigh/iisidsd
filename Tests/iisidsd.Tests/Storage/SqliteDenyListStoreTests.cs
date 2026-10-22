@@ -150,6 +150,89 @@ public sealed class SqliteDenyListStoreTests : IDisposable
         Assert.Equal("dry-run", lastAutoDeny.Outcome);
     }
 
+    [Fact]
+    public async Task ManagedEntryJournal_PersistsAcrossStoreInstancesAndTracksPendingRecovery()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var environment = new TestHostEnvironment(_rootPath);
+        var storageOptions = Options.Create(new StorageOptions { DatabasePath = "data/test.sqlite3" });
+        var findingStore = new SqliteFindingStore(storageOptions, environment);
+        var initializer = new EventDbInitializer(storageOptions, environment, findingStore, NullLogger<EventDbInitializer>.Instance);
+        await initializer.StartAsync(CancellationToken.None);
+
+        var store = new SqliteDenyListStore(storageOptions, environment);
+        var auditId = store.BeginAudit(new DenyListAuditRecord(
+            0,
+            "DOMAIN\\admin",
+            "add",
+            "Example Site",
+            "203.0.113.31",
+            "manual review",
+            DateTimeOffset.UtcNow,
+            DryRun: false,
+            "pending",
+            DateTimeOffset.UtcNow.AddMinutes(15)));
+        Assert.True(store.TryPrepareManagedDeny(new ManagedDenyListEntry(
+            "Example Site", "203.0.113.31", DateTimeOffset.UtcNow.AddMinutes(15), "pending-add", auditId)));
+
+        var restartedStore = new SqliteDenyListStore(storageOptions, environment);
+        Assert.Equal("pending-add", Assert.Single(restartedStore.GetPendingManagedDenies(10)).State);
+        Assert.True(restartedStore.CompleteManagedDeny("Example Site", "203.0.113.31", DateTimeOffset.UtcNow.AddMinutes(15), auditId));
+        Assert.Equal("active", restartedStore.GetManagedDeny("Example Site", "203.0.113.31")?.State);
+        Assert.NotNull(restartedStore.GetExpiry("Example Site", "203.0.113.31"));
+
+        var removeAuditId = restartedStore.BeginAudit(new DenyListAuditRecord(
+            0,
+            "DOMAIN\\admin",
+            "remove",
+            "Example Site",
+            "203.0.113.31",
+            "manual review",
+            DateTimeOffset.UtcNow,
+            DryRun: false,
+            "pending",
+            null));
+        Assert.True(restartedStore.TryTransitionManagedDeny("Example Site", "203.0.113.31", "active", auditId,
+            "pending-remove", removeAuditId));
+        Assert.Equal("pending-remove", Assert.Single(store.GetPendingManagedDenies(10)).State);
+        Assert.False(restartedStore.CompleteManagedDeny("Example Site", "203.0.113.31", null, auditId));
+        Assert.False(restartedStore.TryRemoveManagedDeny("Example Site", "203.0.113.31", "pending-remove", auditId));
+        Assert.True(restartedStore.TryRemoveManagedDeny("Example Site", "203.0.113.31", "pending-remove", removeAuditId));
+        Assert.Null(store.GetManagedDeny("Example Site", "203.0.113.31"));
+        Assert.Null(store.GetExpiry("Example Site", "203.0.113.31"));
+    }
+
+    [Fact]
+    public async Task Initializer_MigratesLegacyTemporaryEntriesIntoOwnershipJournal()
+    {
+        Directory.CreateDirectory(_rootPath);
+        var environment = new TestHostEnvironment(_rootPath);
+        var storageOptions = Options.Create(new StorageOptions { DatabasePath = "data/test.sqlite3" });
+        var findingStore = new SqliteFindingStore(storageOptions, environment);
+        var initializer = new EventDbInitializer(storageOptions, environment, findingStore, NullLogger<EventDbInitializer>.Instance);
+        await initializer.StartAsync(CancellationToken.None);
+        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(_rootPath, "data", "test.sqlite3")
+        }.ToString()))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO iis_temporary_denies (site_name, client_ip, expires_utc)
+                VALUES ('Example Site', '203.0.113.32', '2026-10-21T00:00:00.0000000Z');
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        await initializer.StartAsync(CancellationToken.None);
+
+        var store = new SqliteDenyListStore(storageOptions, environment);
+        var managedEntry = Assert.IsType<ManagedDenyListEntry>(store.GetManagedDeny("Example Site", "203.0.113.32"));
+        Assert.Equal("active", managedEntry.State);
+        Assert.NotNull(managedEntry.ExpiresAt);
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();

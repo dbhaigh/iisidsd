@@ -8,6 +8,7 @@
 - Persistent event storage in SQLite
 - Heuristic URL risk scoring with severity bands
 - Aggregated suspicious-IP findings
+- Shared administrator incident state and analyst notes
 - Per-IP ban-count tracking
 - IIS site discovery and deny-list inspection
 - Optional IIS deny-list modifications guarded by configuration
@@ -16,7 +17,9 @@
 
 ## Release 0.2.3 highlights
 
-- Adding, removing, and expiring IIS deny-list entries no longer triggers configuration-change rotations for the affected application pools. This pool-wide setting also applies to other configuration changes and sites sharing those pools.
+- IIS deny-list changes no longer alter application-pool recycling settings; previews identify shared-pool impact.
+- Deny-list enforcement supports Observe, Simulate, and Enforce modes, with SQLite ownership journaling, audit history, temporary expiry, and pending-operation recovery.
+- Existing unmanaged deny rules and administrator allow rules are preserved; enforcement remains disabled by default.
 
 ## Release 0.2.2 highlights
 
@@ -71,7 +74,8 @@ Controls ETW ingestion.
 - `SessionName`
 - `SubscriptionBufferSize`
 - `IngestionBufferSize`
-- `ProviderName` and `SessionName` must be non-empty; both buffer sizes must be positive and `ProviderId` must not be empty.
+- `ProcessingBatchSize`
+- `ProviderName` and `SessionName` must be non-empty; both buffer sizes must be positive, `ProcessingBatchSize` must be from 1 to 1024, and `ProviderId` must not be empty.
 
 ### `Detection`
 
@@ -94,31 +98,66 @@ Controls URL-risk heuristics.
 - `RateWindowSeconds`
 - `PathScanUniquePathThreshold`
 - `PathScanWindowSeconds`
+- `AuthenticationFailureThreshold`
+- `AuthenticationFailureWindowSeconds`
+- `NotFoundBurstWindowSeconds`
+- `MaximumTrackedClientHistories` - default `1024`, maximum `8192`
+- `MaximumTrackedHistoryBuckets` - default `131072`, maximum `262144`
+- `MaximumTrackedPathsPerHistory` - default `128`, maximum `1024`
+- `MaximumTrackedPathsTotal` - default `65536`, maximum `131072`
+- `MaximumTrackedPathLengthCharacters` - default `1024`, maximum `1024`
+- `MaximumTrackedExtensionSites` - default `256`, maximum `512`
+- `MaximumExtensionsPerSite` - default `128`, maximum `256`
+- `MaximumEventLatenessSeconds` - defaults to `2`, maximum `30`
 - `SuspiciousPathFragments`
 - `ScannerUserAgents`
 
-All score weights must be non-negative; setting a weight to zero disables its scoring contribution. Thresholds and windows must be positive, except `RateThreshold` may be zero.
+All score weights must be non-negative; setting a weight to zero disables its scoring contribution. Thresholds and windows must be positive, except `RateThreshold` may be zero. All four detection windows are limited to 300 seconds. `NotFoundBurstLookbackLimit` caps the number of 404 responses counted inside its time window; it is not a database-row limit.
+
+Temporal history is in memory and keyed by canonical client IP plus normalized server, host, and IIS site identity. IPv4-mapped IPv6 is treated as IPv4; host names are IDN-normalized, lowercased, and stripped of trailing dots. Ports and distinct IIS sites remain distinct. Events without usable IP and host/site identity do not contribute to temporal signals. Histories, buckets, unique-path hashes, and extension caches have the limits listed above; at capacity, new history is rejected and the related metrics record the rejection. A system clock rollback clears temporal windows. These counters intentionally reset on application restart and are not rebuilt from SQLite event history.
+
+### `TrustedProxies`
+
+Forwarded headers are disabled by default. To enable them, set `Enabled` to `true` and list the exact proxy IP addresses in `TrustedProxyIps`; CIDR ranges and ambiguous IP forms are rejected. `ForwardLimit` defaults to `1` and is limited to `10`. Only `X-Forwarded-For` and `X-Forwarded-Proto` are enabled. This trust applies to dashboard HTTP requests, not IIS ETW event client IPs. Never enable forwarding with an empty or overly broad proxy allowlist.
 
 ### `Storage`
 
 Controls persistent storage.
 
 - `DatabasePath` - defaults to `data/iisidsd.sqlite3`
+- `JournalMode` - defaults to `WAL`; use `DELETE` for filesystems that do not support SQLite WAL shared-memory semantics
+- `SynchronousMode` - defaults to `FULL` for durable commits; `NORMAL` is a performance/durability tradeoff and `EXTRA` requests the strongest SQLite sync mode
+- `BusyTimeoutSeconds` - defaults to `5`, maximum `120`
 - `EventRetentionLimit` - maximum retained event rows
 - `EventRetentionDays` - maximum age of retained events; age and row-count pruning are both enforced
 - `FindingRetentionDays` - age after which inactive IP findings and expired per-domain summaries are pruned
+
+SQLite data should live on a local filesystem. WAL with `FULL` synchronous mode is selected for reader/writer concurrency without opting into the weaker `NORMAL` durability tradeoff. Keep the database, `-wal`/`-shm` files while the service is running, and the ETW diagnostics sidecar together when backing up or moving storage. Event and finding retention runs in bounded chunks; `/health` performs a lightweight connection check and throttles `quick_check(1)` to once per hour.
+
+Legacy event-list APIs accept up to 1,000 rows per request; event exports accept up to 10,000 rows. Finding and ban-count lists are bounded to 500 rows. The versioned event page accepts 1 to 1,000 rows and rejects out-of-range limits rather than silently clamping them.
+
+### Event replay and timestamps
+
+`GET /api/v2/events` returns cursor pages of event envelopes. Omit both cursors for the latest page, pass `afterSequence` to fetch newer events, or `beforeSequence` to fetch an older page; the two cursors are mutually exclusive and exclusive of the returned boundary. Items are ordered by ascending persisted sequence. Each envelope contains `eventId`, UTC `timestamp`, `type`, `payloadVersion`, `cursor`, and the legacy-compatible event `payload`. The response includes page cursors, `hasMore`, and retention-gap metadata. `limit` is 1-1,000; `clientIp` must be a valid IPv4/IPv6 address, and `domain` is limited to 253 non-control characters.
+
+`GET /api/v2/events/stream` uses the same filters and accepts `afterSequence`; an EventSource `Last-Event-ID` takes precedence on reconnect. It emits `iis.event.v1` envelopes, `checkpoint` events for filtered sequence progress, and `recovery` events for retention gaps or slow consumers. The existing `/api/events/stream` route remains available with its legacy `etw` event payload shape. Concurrent streams default to a maximum of 64 (configurable from 1 to 256); heartbeat and write-timeout defaults are 15 and 30 seconds, each configurable from 1 to 120 seconds.
+
+The store subscribes before replaying retained rows, so events arriving during reconnect are either replayed or read from the live queue without cursor duplication. Cursors are stable only for the lifetime of retained rows: if retention removed history, the API and stream report a gap and continue from the retained boundary. This is not exactly-once delivery; a successful server write or flush does not prove the browser received or processed an event. Clients should deduplicate by event ID/cursor and persist their cursor only after processing. API timestamps are UTC; the dashboard formats them in the viewer's local browser time zone.
 
 ### `IisAdmin`
 
 Controls IIS deny-list write safety.
 
 - `EnableDenyListChanges` - defaults to `false`
+- `EnforcementMode` - `Observe`, `Simulate`, or `Enforce`; when omitted, legacy `DryRun` maps to `Simulate` or `Enforce`
 - `AllowList` - exact IPv4/IPv6 addresses or CIDR ranges that are never added to an IIS deny list
 - `TemporaryBanMinutes` - positive values set an expiry; `0` means permanent
 - `DryRun` - defaults to `true`; records intended actions without changing IIS
 - `RequireMultipleIndicators` - when enabled, automatic denial requires multiple distinct indicators
 
-`EnableDenyListChanges` is the master switch for all deny-list writes. Dry-run mode does not invoke IIS mutation commands. Manual and automatic actions, including dry-run intentions, are recorded in the SQLite audit log.
+`EnableDenyListChanges` is the master switch for IIS writes. When it is false, the effective mode is `Observe`. `Simulate` records intended actions without invoking IIS mutation commands. `DryRun=true` also prevents an explicit `Enforce` mode from writing. Keep the defaults until an administrator has reviewed the preview and audit behavior.
+
+The SQLite journal tracks service ownership and pending IIS transitions. Existing unmanaged deny rules are not adopted or removed, and administrator allow rules are preserved. Temporary expiry applies only to service-owned entries. Pending transitions are reconciled while enforcement is active; ambiguous cases are preserved for administrator review. Do not delete the configured SQLite database as a way to reset IIS ownership. See [docs/Operations.md](docs/Operations.md#iis-deny-list-workflow) for the change and rollback runbook.
 
 ### `Tray`
 
@@ -136,9 +175,13 @@ The tray menu also displays operational status fetched from the local `/health` 
 
 The `Urls` setting controls the dashboard listener. The default listens only on loopback at `http://127.0.0.1:5080/`.
 
-By default `Urls` is `http://127.0.0.1:5080` and non-loopback requests are rejected, even if the listener is rebound externally. To enable remote access, set `Dashboard:RemoteAccessEnabled` to `true`, bind `Urls` to an HTTPS address, and configure a Kestrel server certificate using the standard Kestrel certificate settings. Remote requests require Windows Authentication and HTTPS. Do not put certificate passwords in source-controlled configuration.
+By default `Urls` is `http://127.0.0.1:5080` and non-loopback requests are rejected. Anonymous local users may view the dashboard and read-only event/finding APIs. Every management operation requires an authenticated Windows Administrator, including when the service is elevated and the request arrives over loopback. The browser authenticates using Windows Authentication; users who are not Windows Administrators retain dashboard viewing but cannot access management features.
 
-Loopback dashboard requests do not require Windows Authentication. When the host process is running as a Windows Administrator, loopback requests can also use administrator-only APIs without per-user authentication; this grants those permissions to all local processes that can connect to the dashboard. If the host is not elevated, administrator-only APIs require an authenticated Windows Administrator. Remote requests always require HTTPS and an authenticated Windows Administrator when remote access is enabled. IIS deny-list changes also require `IisAdmin:EnableDenyListChanges=true`, which is disabled by default. Restrict inbound firewall rules to the intended clients.
+`Dashboard:MaximumEventStreamSubscribers` defaults to 64 and is limited to 1-256. `Dashboard:EventStreamHeartbeatSeconds` defaults to 15 seconds and `Dashboard:EventStreamWriteTimeoutSeconds` to 30 seconds; both are limited to 1-120 seconds.
+
+To enable remote access, set `Dashboard:RemoteAccessEnabled` to `true`, bind `Urls` to an HTTPS address, configure a Kestrel server certificate, and add every DNS name or exact IP used in the request Host header to `Dashboard:AllowedHosts`. Remote mode requires HTTPS and Windows Authentication on all requests, including loopback requests, so a reverse proxy cannot gain local exemptions. Allowed hosts default to `localhost`, `127.0.0.1`, and `::1`; wildcards and host:port entries are rejected. For a proxy, separately configure `TrustedProxies` with its exact peer IP and ensure it overwrites forwarded headers. Do not put certificate passwords in source-controlled configuration.
+
+Unsafe browser requests require a same-origin `Origin` (or same-origin `Referer` when Origin is unavailable); cross-origin and missing-origin writes are rejected. Host validation mitigates DNS rebinding and hostile Host headers. Do not expose the listener or trusted proxy to unintended networks. IIS deny-list changes additionally require `IisAdmin:EnableDenyListChanges=true`, which is disabled by default. See [docs/SECURITY.md](docs/SECURITY.md) for the endpoint matrix, threat model, migration steps, and residual risks.
 
 The findings and events export endpoints return retained data and may contain client addresses, paths, host names, and user-agent values. They are administrator-only. CSV output quotes fields and prefixes spreadsheet formula-like values to prevent CSV formula execution.
 
@@ -178,10 +221,13 @@ Shows aggregated suspicious-IP findings including:
 - domains targeted
 - persisted ban count
 - merged detection reasons
+- explicit detector evidence and analyst workflow states (Open, Acknowledged, Suppressed, Resolved)
+
+Analyst states and notes are stored in SQLite and shared by authorized administrators. They do not change detector scores, findings, or automatic deny decisions. Detector explanations are heuristic leads; configured weight contributions are not available in the existing event API.
 
 ### Details
 
-Shows recent events for the selected IP and allows editing the stored ban count.
+Separates observed request facts, heuristic detector interpretation, and the shared analyst conclusion. Related findings are linked by observed domain. Analyst notes and workflow states require administrator access; unauthorized users can still view regular event and finding data.
 
 ### IIS
 
@@ -208,6 +254,8 @@ Provides an administrator-only JSON editor for ETW, detection, storage, IIS safe
 - `GET /api/findings?limit=&domain=` (maximum 500 findings per response)
 - `GET /api/findings/{clientIp}?domain=`
 - `GET /api/findings/{clientIp}/events?limit=&domain=&suspiciousOnly=`
+- `GET /api/incidents?limit=` (Windows Administrator; shared analyst state)
+- `PUT /api/incidents/{clientIp}` with `{ "status": "open|acknowledged|suppressed|resolved", "note": "..." }` (Windows Administrator)
 - `GET /api/export/findings?format=json|csv&limit=&domain=` (Windows Administrator)
 - `GET /api/export/events?format=json|csv&limit=&clientIp=&domain=&suspiciousOnly=` (Windows Administrator)
 
@@ -220,6 +268,7 @@ Provides an administrator-only JSON editor for ETW, detection, storage, IIS safe
 
 - `GET /api/iis/sites`
 - `GET /api/iis/sites/{siteName}/deny-list`
+- `POST /api/iis/deny-list/preview` with `{ "siteName": "...", "clientIp": "x.x.x.x" }`
 - `POST /api/iis/sites/{siteName}/deny-list` with `{ "clientIp": "x.x.x.x" }`
 - `DELETE /api/iis/sites/{siteName}/deny-list/{clientIp}`
 

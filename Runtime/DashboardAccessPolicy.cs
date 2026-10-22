@@ -23,12 +23,12 @@ public static class DashboardAccessPolicy
             return DashboardAccessDecision.Forbidden;
         }
 
-        if (remoteAccessEnabled && !isLocalRequest && !isHttps)
+        if (remoteAccessEnabled && !isHttps)
         {
             return DashboardAccessDecision.Forbidden;
         }
 
-        if (remoteAccessEnabled && !isLocalRequest)
+        if (remoteAccessEnabled)
         {
             return DashboardAccessDecision.AuthenticationRequired;
         }
@@ -40,22 +40,8 @@ public static class DashboardAccessPolicy
         => principal.Identity is WindowsIdentity identity &&
             new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
 
-    public static bool IsCurrentProcessAdministrator()
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return false;
-        }
-
-        using var identity = WindowsIdentity.GetCurrent();
-        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
-    }
-
-    public static bool CanAccessAdministratorFeatures(
-        ClaimsPrincipal principal,
-        bool isLocalRequest,
-        bool hostIsAdministrator)
-        => IsWindowsAdministrator(principal) || (isLocalRequest && hostIsAdministrator);
+    public static bool CanAccessAdministratorFeatures(ClaimsPrincipal principal)
+        => IsWindowsAdministrator(principal);
 
     public static bool IsLocalRequest(IPAddress? remoteAddress)
     {

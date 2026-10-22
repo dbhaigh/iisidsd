@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.HttpOverrides;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Net;
@@ -76,8 +77,12 @@ builder.Host.UseWindowsService(options =>
     options.ServiceName = "iisidsd";
 });
 builder.Services.AddIisIdsdOptions(builder.Configuration);
+builder.Services.AddOptions<ForwardedHeadersOptions>()
+    .Configure<IOptions<TrustedProxyOptions>>((options, trustedProxyOptionsAccessor) =>
+        trustedProxyOptionsAccessor.Value.ConfigureForwardedHeaders(options));
 builder.Services.AddOpenApi();
 builder.Services.AddSingleton<IisObservability>();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<SqliteHealthProbe>();
 builder.Services.AddSingleton<IBackendConfigurationStore, BackendConfigurationStore>();
 
@@ -103,21 +108,17 @@ builder.Services.AddOpenTelemetry()
     });
 
 builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme).AddNegotiate();
-var hostIsAdministrator = DashboardAccessPolicy.IsCurrentProcessAdministrator();
-var httpContextAccessor = new HttpContextAccessor();
-builder.Services.AddSingleton<IHttpContextAccessor>(httpContextAccessor);
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("DashboardAdministrator", policy =>
-        policy.RequireAssertion(context =>
-            DashboardAccessPolicy.CanAccessAdministratorFeatures(
-                context.User,
-                httpContextAccessor.HttpContext is { } httpContext &&
-                DashboardAccessPolicy.IsLocalRequest(httpContext.Connection.RemoteIpAddress),
-                hostIsAdministrator)));
+        policy.RequireAuthenticatedUser()
+            .RequireAssertion(context => DashboardAccessPolicy.CanAccessAdministratorFeatures(context.User)));
 });
 builder.Services.AddSingleton<IFindingStore, SqliteFindingStore>();
+builder.Services.AddSingleton<IAnalystIncidentStore, SqliteAnalystIncidentStore>();
 builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
+builder.Services.AddSingleton<IReplayableEventStore>(serviceProvider =>
+    (IReplayableEventStore)serviceProvider.GetRequiredService<IEventStore>());
 builder.Services.AddSingleton<IEventRetentionStore>(serviceProvider =>
     (IEventRetentionStore)serviceProvider.GetRequiredService<IEventStore>());
 builder.Services.AddSingleton<IBanCountService, BanCountService>();
@@ -144,6 +145,11 @@ if (runWithTray)
 builder.Services.AddRouting();
 
 var webApp = builder.Build();
+if (webApp.Services.GetRequiredService<IOptions<TrustedProxyOptions>>().Value.Enabled)
+{
+    webApp.UseForwardedHeaders();
+}
+
 if (!webApp.Environment.WebRootFileProvider.GetFileInfo("index.html").Exists)
 {
     webApp.Logger.LogError(
@@ -151,10 +157,11 @@ if (!webApp.Environment.WebRootFileProvider.GetFileInfo("index.html").Exists)
         webApp.Environment.WebRootPath);
 }
 
-var remoteAccessEnabled = builder.Configuration.GetValue<bool>("Dashboard:RemoteAccessEnabled");
+var dashboardOptions = webApp.Services.GetRequiredService<IOptions<DashboardOptions>>().Value;
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 webApp.UseAuthentication();
-webApp.UseDashboardAccessPolicy(remoteAccessEnabled);
+dashboardOptions.TryGetCanonicalAllowedHosts(out var allowedHosts);
+webApp.UseDashboardAccessPolicy(dashboardOptions.RemoteAccessEnabled, allowedHosts);
 webApp.UseAuthorization();
 webApp.UseDefaultFiles();
 webApp.UseStaticFiles();
@@ -183,9 +190,9 @@ static void OpenDashboardBrowser(string browserUrl, ILogger logger)
     {
         Process.Start(new ProcessStartInfo(browserUrl) { UseShellExecute = true });
     }
-    catch (Exception exception)
+    catch (Exception)
     {
-        logger.LogError(exception, "Unable to open the iisidsd dashboard at {Url}.", browserUrl);
+        logger.LogError("Unable to open the iisidsd dashboard in the default browser.");
     }
 }
 

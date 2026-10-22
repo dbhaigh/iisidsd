@@ -1,9 +1,20 @@
 # Change Log
 
+## Unreleased
+
+### Added
+- Shared SQLite-backed analyst incident states and notes (capped at 5,000 records), administrator-only incident APIs, prioritized findings, evidence-focused IP investigation, system health indicators, and mode-aware bulk action review.
+
 ## 0.2.3 - 2026-10-16
 
 ### Fixed
-- Adding, removing, and expiring IIS deny-list entries now suppresses configuration-change rotations for the affected application pools.
+- IIS deny-list operations no longer change app-pool recycling settings; previews report shared-pool impact instead.
+
+### Added
+- Observe, Simulate, and Enforce policies, with enforcement disabled by default and legacy `DryRun` compatibility.
+- SQLite ownership journaling, audit phases, conditional state transitions, and recovery of interrupted IIS mutations.
+- Safe site-specific preview, temporary expiry for service-owned rules, and protection for unmanaged deny and administrator allow rules.
+- Cross-process serialization for deny-list operations sharing the same SQLite database.
 
 ## 0.2.2 - 2026-10-14
 

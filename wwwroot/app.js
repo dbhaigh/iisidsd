@@ -1,4 +1,5 @@
 const defaultColumnWidths = [170, 140, 100, 110, 110, 110, 220, 220, 280];
+const dashboardModel = window.IisidsdDashboardModel;
 
 const state = {
   events: [],
@@ -19,10 +20,26 @@ const state = {
   selectedFindingIps: new Set(),
   selectedSiteName: '',
   findingEvents: [],
+  incidents: {},
+  incidentAccessStatus: 'loading',
+  incidentAccessError: '',
   searchQuery: '',
+  incidentStatusFilter: 'all',
+  eventStatusFilter: 'all',
+  eventTimeFilter: 'all',
+  lastEventAt: 0,
+  eventRows: new Map(),
+  databaseHealth: 'checking',
+  ingestionHealth: 'checking',
+  droppedEventCount: null,
+  processingFailureCount: null,
+  metricsAccess: 'unknown',
+  metricsRefreshRunning: false,
   livePaused: false,
   bulkDenyRunning: false,
   eventSource: null,
+  eventCursor: 0,
+  recoveryWarning: '',
   reconnectTimer: 0,
   reconnectAttempts: 0,
   detailRequestId: 0,
@@ -31,7 +48,7 @@ const state = {
   dismissedAccessWarnings: new Set(),
   sortState: {
     events: { key: 'timestamp', direction: 'desc' },
-    findings: { key: 'timestamp', direction: 'desc' },
+    findings: { key: 'risk', direction: 'desc' },
     details: { key: 'timestamp', direction: 'desc' },
     iis: { key: 'client', direction: 'asc' }
   },
@@ -48,6 +65,9 @@ const status = document.querySelector('#status');
 const streamHint = document.querySelector('#stream-hint');
 const pauseEvents = document.querySelector('#pause-events');
 const searchInput = document.querySelector('#search-input');
+const eventStatusFilter = document.querySelector('#event-status-filter');
+const eventTimeFilter = document.querySelector('#event-time-filter');
+const incidentStatusFilter = document.querySelector('#incident-status-filter');
 const themeToggle = document.querySelector('#theme-toggle');
 const accessNotices = document.querySelector('#access-notices');
 const domains = document.querySelector('#domains');
@@ -74,6 +94,10 @@ const configurationSave = document.querySelector('#configuration-save');
 const configurationStatus = document.querySelector('#configuration-status');
 const bulkDenySelected = document.querySelector('#bulk-deny-selected');
 const bulkDenyStatus = document.querySelector('#bulk-deny-status');
+const bulkDenyDialog = document.querySelector('#bulk-deny-dialog');
+const bulkDenyPreview = document.querySelector('#bulk-deny-preview');
+const bulkDenyMode = document.querySelector('#bulk-deny-mode');
+const bulkDenyConfirm = document.querySelector('#bulk-deny-confirm');
 const selectVisible = document.querySelector('#select-visible');
 const selectionCount = document.querySelector('#selection-count');
 const riskChart = document.querySelector('#risk-chart');
@@ -81,6 +105,17 @@ const ipChart = document.querySelector('#ip-chart');
 const chartFootnote = document.querySelector('#chart-footnote');
 const findingRiskIndicators = document.querySelector('#finding-risk-indicators');
 const findingReasons = document.querySelector('#finding-reasons');
+const findingObservedFacts = document.querySelector('#finding-observed-facts');
+const incidentState = document.querySelector('#incident-state');
+const analystNote = document.querySelector('#analyst-note');
+const incidentStateSave = document.querySelector('#incident-state-save');
+const incidentStateStatus = document.querySelector('#incident-state-status');
+const relatedFindingsList = document.querySelector('#related-findings-list');
+const databaseHealth = document.querySelector('#database-health');
+const ingestionHealth = document.querySelector('#ingestion-health');
+const dataFreshness = document.querySelector('#data-freshness');
+let healthRefreshRunning = false;
+let healthRefreshHandle = 0;
 const tableViews = {
   events: document.querySelector('#events-view table'),
   findings: document.querySelector('#findings-view table'),
@@ -100,6 +135,7 @@ const tableColumns = [
 ];
 const columnWidthLimits = { min: 80, max: 600 };
 let findingsRefreshHandle = 0;
+let chartRefreshHandle = 0;
 const maxEventsInMemory = 2000;
 const initialEventLimit = 1000;
 const dayInMilliseconds = 24 * 60 * 60 * 1000;
@@ -115,6 +151,78 @@ function setConnectionStatus(message, stateName) {
   dot.className = 'connection-dot';
   dot.setAttribute('aria-hidden', 'true');
   status.replaceChildren(dot, text(message));
+}
+
+function renderHealthIndicators() {
+  databaseHealth.dataset.state = state.databaseHealth;
+  databaseHealth.textContent = state.databaseHealth === 'ok'
+    ? 'Database: healthy'
+    : state.databaseHealth === 'degraded'
+      ? 'Database: degraded'
+      : 'Database: checking';
+
+  ingestionHealth.dataset.state = state.metricsAccess === 'ready'
+    ? (state.droppedEventCount > 0 || state.processingFailureCount > 0 ? 'warning' : 'ok')
+    : state.metricsAccess === 'forbidden' ? 'restricted' : state.metricsAccess === 'error' ? 'degraded' : 'checking';
+  ingestionHealth.textContent = state.metricsAccess === 'ready'
+    ? `Ingestion: ${state.droppedEventCount} dropped · ${state.processingFailureCount} processing failures · queue ${state.queueDepth ?? 0}/${state.queueHighWaterMark ?? 0} high-water`
+    : state.metricsAccess === 'forbidden'
+      ? 'Ingestion loss counters: administrator access required'
+      : state.metricsAccess === 'error'
+        ? 'Ingestion counters: unavailable'
+        : 'Ingestion: checking';
+
+  if (!state.lastEventAt) {
+    dataFreshness.dataset.state = 'unknown';
+    dataFreshness.textContent = 'Event data: none received';
+    return;
+  }
+
+  const ageMilliseconds = Math.max(0, Date.now() - state.lastEventAt);
+  const stale = ageMilliseconds > 5 * 60 * 1000;
+  dataFreshness.dataset.state = stale ? 'warning' : 'ok';
+  dataFreshness.textContent = `Latest event: ${stale ? 'stale · ' : ''}${Math.floor(ageMilliseconds / 1000)}s ago`;
+}
+
+function parsePrometheusMetric(metricsText, metricName) {
+  const line = metricsText.split(/\r?\n/).find(candidate => candidate.startsWith(`${metricName} `));
+  const value = line ? Number(line.slice(metricName.length).trim()) : NaN;
+  return Number.isFinite(value) ? value : 0;
+}
+
+async function refreshDashboardHealth() {
+  if (healthRefreshRunning) return;
+  healthRefreshRunning = true;
+  const healthRequest = fetch('/health').then(async response => {
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    state.databaseHealth = result.status === 'ok' ? 'ok' : 'degraded';
+  }).catch(() => {
+    state.databaseHealth = 'degraded';
+  });
+  const metricsRequest = fetch('/metrics').then(async response => {
+    if (!response.ok) {
+      const error = new Error(`HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    const metricsText = await response.text();
+    state.droppedEventCount = parsePrometheusMetric(metricsText, 'etw_events_dropped');
+    state.processingFailureCount = parsePrometheusMetric(metricsText, 'event_processing_failures');
+    state.queueDepth = parsePrometheusMetric(metricsText, 'queue_depth');
+    state.queueHighWaterMark = parsePrometheusMetric(metricsText, 'queue_high_water_mark');
+    state.metricsAccess = 'ready';
+    const lastEventSeconds = parsePrometheusMetric(metricsText, 'last_event_timestamp_seconds');
+    if (lastEventSeconds > 0) state.lastEventAt = Math.max(state.lastEventAt, lastEventSeconds * 1000);
+  }).catch(error => {
+    state.metricsAccess = error.status === 401 || error.status === 403 ? 'forbidden' : 'error';
+  });
+  await Promise.all([healthRequest, metricsRequest]);
+  healthRefreshRunning = false;
+  renderHealthIndicators();
+  if (!healthRefreshHandle) {
+    healthRefreshHandle = window.setInterval(refreshDashboardHealth, 60_000);
+  }
 }
 
 function escapeSegment(value) {
@@ -213,7 +321,7 @@ function getColumnValue(view, item, key) {
         risk: item.highestRiskScore,
         banCount: item.banCount ?? 0,
         domains: (item.domains || []).join(', '),
-        path: '',
+        path: (item.riskIndicators || []).join('; '),
         detection: (item.detectionReasons || []).join('; ')
       }[key];
     case 'iis':
@@ -379,33 +487,35 @@ function formatTimestamp(value) {
 
 function setView(view) {
   state.selectedView = view;
-  viewButtons.forEach(button => button.classList.toggle('active', button.dataset.view === view));
-  document.querySelectorAll('.view').forEach(panel => panel.classList.toggle('active', panel.id === `${view}-view`));
+  viewButtons.forEach(button => {
+    const isSelected = button.dataset.view === view;
+    button.classList.toggle('active', isSelected);
+    button.setAttribute('aria-selected', String(isSelected));
+    button.tabIndex = isSelected ? 0 : -1;
+  });
+  document.querySelectorAll('.view').forEach(panel => {
+    const isSelected = panel.id === `${view}-view`;
+    panel.classList.toggle('active', isSelected);
+    panel.hidden = !isSelected;
+  });
 }
 
 function visibleEvent(webEvent) {
-  return (allEvents.checked || webEvent.isSuspicious) &&
-    (state.selectedDomain === '*' || webEvent.domain === state.selectedDomain) &&
-    matchesSearch([
-      webEvent.clientIp,
-      webEvent.domain,
-      webEvent.path,
-      webEvent.method,
-      webEvent.detectionReason,
-      ...(webEvent.riskIndicators || [])
-    ]);
+  return (allEvents.checked || webEvent.isSuspicious) && dashboardModel.filterEvents([webEvent], {
+    query: state.searchQuery,
+    status: state.eventStatusFilter,
+    range: state.eventTimeFilter,
+    domain: state.selectedDomain
+  }).length > 0;
 }
 
 function visibleFinding(finding) {
-  return (state.selectedDomain === '*' || (finding.domains || []).includes(state.selectedDomain)) &&
-    matchesSearch([
-      finding.clientIp,
-      ...(finding.domains || []),
-      ...(finding.detectionReasons || []),
-      ...(finding.riskIndicators || []),
-      finding.highestRiskSeverity,
-      finding.highestRiskScore
-    ]);
+  return dashboardModel.filterFindings([finding], {
+    query: state.searchQuery,
+    domain: state.selectedDomain,
+    incidentStatus: state.incidentStatusFilter,
+    incidents: state.incidents
+  }).length > 0;
 }
 
 function ensureDomainButtons() {
@@ -429,30 +539,57 @@ function ensureDomainButtons() {
   }
 }
 
+function createEventRow(webEvent) {
+  const row = document.createElement('tr');
+  row.dataset.eventId = webEvent.id;
+  if (webEvent.isSuspicious) row.className = 'suspicious';
+
+  const findingBanCount = state.findings.find(item => item.clientIp === webEvent.clientIp)?.banCount ?? 0;
+  appendCells(row, [formatTimestamp(webEvent.timestamp), webEvent.clientIp, 1, webEvent.isSuspicious ? 'Yes' : 'No']);
+  appendCell(row, createRiskBadge(webEvent.riskScore, webEvent.riskSeverity));
+  appendCells(row, [findingBanCount, webEvent.domain, webEvent.path, String(webEvent.detectionReason || '')]);
+  return row;
+}
+
 function renderEvents() {
-  eventBody.replaceChildren();
   const visibleEvents = sortItems('events', state.events.filter(visibleEvent)).slice(0, 500);
+  const visibleIds = new Set(visibleEvents.map(webEvent => webEvent.id));
+  const recentIds = new Set(state.events.map(webEvent => webEvent.id));
+  for (const [eventId, row] of state.eventRows) {
+    if (!recentIds.has(eventId)) state.eventRows.delete(eventId);
+    if (!visibleIds.has(eventId)) row.remove();
+  }
+
   if (!visibleEvents.length) {
-    eventBody.append(createEmptyRow(allEvents.checked ? 'No events received.' : 'No suspicious events received.'));
+    if (!eventBody.querySelector('.empty')) {
+      eventBody.replaceChildren(createEmptyRow(allEvents.checked ? 'No matching events in the selected window.' : 'No suspicious events in the selected window.'));
+    }
     return;
   }
 
-  for (const webEvent of visibleEvents) {
-    const row = document.createElement('tr');
-    if (webEvent.isSuspicious) row.className = 'suspicious';
+  eventBody.querySelector('.empty')?.remove();
+  visibleEvents.forEach((webEvent, index) => {
+    let row = state.eventRows.get(webEvent.id);
+    if (!row) {
+      row = createEventRow(webEvent);
+      state.eventRows.set(webEvent.id, row);
+    }
 
-    const findingBanCount = state.findings.find(item => item.clientIp === webEvent.clientIp)?.banCount ?? 0;
-    appendCells(row, [formatTimestamp(webEvent.timestamp), webEvent.clientIp, 1, webEvent.isSuspicious ? 'Yes' : 'No']);
-    appendCell(row, createRiskBadge(webEvent.riskScore, webEvent.riskSeverity));
-    appendCells(row, [findingBanCount, webEvent.domain, webEvent.path, String(webEvent.detectionReason || '')]);
-
-    eventBody.append(row);
+    if (eventBody.children[index] !== row) {
+      eventBody.insertBefore(row, eventBody.children[index] || null);
+    }
+  });
+  while (eventBody.children.length > visibleEvents.length) {
+    eventBody.lastElementChild.remove();
   }
 }
 
 function renderFindings() {
   findingBody.replaceChildren();
-  const visibleFindings = sortItems('findings', state.findings.filter(visibleFinding));
+  const filteredFindings = state.findings.filter(visibleFinding);
+  const visibleFindings = state.sortState.findings.key === 'risk' && state.sortState.findings.direction === 'desc'
+    ? dashboardModel.prioritizeFindings(filteredFindings)
+    : sortItems('findings', filteredFindings);
   const allVisibleSelected = visibleFindings.length > 0 &&
     visibleFindings.every(finding => state.selectedFindingIps.has(finding.clientIp));
   selectVisible.textContent = allVisibleSelected ? 'Clear visible selection' : 'Select visible';
@@ -460,6 +597,11 @@ function renderFindings() {
   selectVisible.disabled = visibleFindings.length === 0 || state.bulkDenyRunning;
   bulkDenySelected.disabled = state.selectedFindingIps.size === 0 ||
     !state.iisStatusInfo?.enableDenyListChanges || state.bulkDenyRunning;
+  const enforcementMode = state.iisStatusInfo?.enforcementMode;
+  bulkDenySelected.textContent = enforcementMode === 'Enforce' ? 'Review and deny selected'
+    : enforcementMode === 'Simulate' ? 'Review simulation'
+      : enforcementMode === 'Observe' ? 'Review observed action'
+        : 'Review selected action';
   if (!visibleFindings.length) {
     findingBody.append(createEmptyRow('No suspicious IP findings available.'));
     return;
@@ -467,8 +609,7 @@ function renderFindings() {
 
   for (const finding of visibleFindings) {
     const row = document.createElement('tr');
-    row.className = `clickable ${state.selectedFindingIp === finding.clientIp ? 'selected' : ''}`.trim();
-    row.onclick = () => openFinding(finding.clientIp);
+    row.className = state.selectedFindingIp === finding.clientIp ? 'selected' : '';
 
     appendCell(row, formatTimestamp(finding.lastSeen));
     const clientCell = appendCell(row, '');
@@ -487,10 +628,25 @@ function renderFindings() {
       }
       renderFindings();
     };
-    clientCell.append(selector, text(finding.clientIp));
+    const openButton = document.createElement('button');
+    openButton.type = 'button';
+    openButton.className = 'finding-open';
+    openButton.setAttribute('aria-label', `Investigate source ${finding.clientIp}`);
+    openButton.append(text(finding.clientIp));
+    openButton.onclick = () => openFinding(finding.clientIp);
+    const analystStatus = dashboardModel.normalizeIncidentRecord(state.incidents[finding.clientIp]).status;
+    const statusBadge = document.createElement('span');
+    statusBadge.className = `incident-badge ${analystStatus}`;
+    statusBadge.append(text(analystStatus));
+    clientCell.append(selector, openButton, statusBadge);
     appendCells(row, [finding.requestCount, finding.suspiciousRequestCount]);
     appendCell(row, createRiskBadge(finding.highestRiskScore, finding.highestRiskSeverity));
-    appendCells(row, [finding.banCount ?? 0, (finding.domains || []).join(', '), '', (finding.detectionReasons || []).join('; ')]);
+    appendCells(row, [
+      finding.banCount ?? 0,
+      (finding.domains || []).join(', '),
+      (finding.riskIndicators || []).join('; '),
+      (finding.detectionReasons || []).join('; ')
+    ]);
 
     findingBody.append(row);
   }
@@ -563,6 +719,116 @@ function renderCharts() {
   chartFootnote.textContent = `${events.length} matching events from the last 24 hours in a rolling sample of ${state.events.length} recent events.`;
 }
 
+function renderFindingFacts(finding) {
+  findingObservedFacts.replaceChildren();
+  const statusCodes = [...new Set(state.findingEvents.map(webEvent => webEvent.statusCode).filter(Number.isFinite))].sort((left, right) => left - right);
+  const facts = [
+    ['Source address', finding.clientIp],
+    ['Requests retained', finding.requestCount],
+    ['Suspicious requests', finding.suspiciousRequestCount],
+    ['Observed domains', (finding.domains || []).join(', ') || 'Not recorded'],
+    ['HTTP responses', statusCodes.join(', ') || 'Not loaded'],
+    ['Activity window', `${formatTimestamp(finding.firstSeen)} to ${formatTimestamp(finding.lastSeen)}`]
+  ];
+  for (const [label, value] of facts) {
+    const item = document.createElement('div');
+    item.className = 'fact-item';
+    const term = document.createElement('span');
+    term.className = 'fact-label';
+    term.append(text(label));
+    const detail = document.createElement('strong');
+    detail.append(text(value));
+    item.append(term, detail);
+    findingObservedFacts.append(item);
+  }
+}
+
+function renderAnalystState(finding) {
+  const incident = dashboardModel.normalizeIncidentRecord(state.incidents[finding.clientIp]);
+  const canEdit = state.incidentAccessStatus === 'ready';
+  if (document.activeElement !== incidentState) incidentState.value = incident.status;
+  if (document.activeElement !== analystNote) analystNote.value = incident.note;
+  incidentState.disabled = !canEdit;
+  analystNote.disabled = !canEdit;
+  incidentStateSave.disabled = !canEdit;
+  if (state.incidentAccessStatus === 'loading') {
+    incidentStateStatus.textContent = 'Loading shared analyst state...';
+  } else if (state.incidentAccessStatus !== 'ready') {
+    incidentStateStatus.textContent = state.incidentAccessError || 'Shared analyst state is unavailable.';
+  } else if (incident.updatedBy) {
+    incidentStateStatus.textContent = `Last updated by ${incident.updatedBy}${incident.updatedAtUtc ? ` at ${formatTimestamp(incident.updatedAtUtc)}` : ''}.`;
+  }
+}
+
+function renderRelatedFindings(finding) {
+  relatedFindingsList.replaceChildren();
+  const domainsForFinding = new Set(finding.domains || []);
+  const related = dashboardModel.prioritizeFindings(state.findings
+    .filter(candidate => candidate.clientIp !== finding.clientIp && (candidate.domains || []).some(domain => domainsForFinding.has(domain)))
+    .slice(0, 8));
+  if (!related.length) {
+    relatedFindingsList.append(text('No other findings share the affected sites in the loaded queue.'));
+    return;
+  }
+
+  for (const candidate of related) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'related-finding-link';
+    button.append(
+      text(`${candidate.clientIp} · ${candidate.highestRiskSeverity} ${candidate.highestRiskScore} · ${(candidate.domains || []).join(', ')}`)
+    );
+    button.onclick = () => openFinding(candidate.clientIp);
+    relatedFindingsList.append(button);
+  }
+}
+
+async function refreshIncidents() {
+  try {
+    const records = await fetchJson('/api/incidents?limit=500');
+    state.incidents = Object.fromEntries(records.map(record => [record.clientIp, record]));
+    state.incidentAccessStatus = 'ready';
+    state.incidentAccessError = '';
+  } catch (error) {
+    state.incidents = {};
+    state.incidentAccessStatus = error.status === 401 || error.status === 403 ? 'forbidden' : 'error';
+    state.incidentAccessError = error.status === 401
+      ? 'Administrator sign-in is required to load shared analyst notes.'
+      : error.status === 403
+        ? 'Administrator access is required to load or edit shared analyst state.'
+        : `Unable to load shared analyst state: ${error.message}`;
+  }
+  renderFindings();
+  if (state.selectedFindingIp) renderDetails();
+}
+
+async function saveIncidentAnalysis() {
+  const finding = selectedFinding();
+  if (!finding) {
+    incidentStateStatus.textContent = 'Select a finding before saving analyst state.';
+    return;
+  }
+
+  try {
+    const updated = await fetchJson(`/api/incidents/${escapeSegment(finding.clientIp)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: incidentState.value, note: analystNote.value })
+    });
+    state.incidents = { ...state.incidents, [finding.clientIp]: updated };
+    incidentStateStatus.textContent = `Saved shared ${updated.status} state.`;
+    renderFindings();
+    renderDetails();
+  } catch (error) {
+    if (error.status === 401 || error.status === 403) {
+      state.incidentAccessStatus = 'forbidden';
+      state.incidentAccessError = 'Administrator access is required to save shared analyst state.';
+      incidentStateSave.disabled = true;
+    }
+    incidentStateStatus.textContent = `Unable to save analyst state: ${error.message}`;
+  }
+}
+
 function renderFindingIndicators(finding) {
   const indicators = new Set(finding.riskIndicators || []);
   for (const webEvent of state.findingEvents) {
@@ -583,10 +849,28 @@ function renderFindingIndicators(finding) {
     }
 
     for (const value of values) {
-      const chip = document.createElement('span');
-      chip.className = 'indicator-chip';
-      chip.append(text(value));
-      container.append(chip);
+      if (container === findingReasons) {
+        const chip = document.createElement('span');
+        chip.className = 'indicator-chip';
+        chip.append(text(value));
+        container.append(chip);
+        continue;
+      }
+
+      const explanation = dashboardModel.getRiskExplanation(value);
+      const card = document.createElement('div');
+      card.className = 'indicator-explanation';
+      const title = document.createElement('strong');
+      title.append(text(value));
+      const description = document.createElement('span');
+      description.append(text(explanation.description));
+      const weight = document.createElement('span');
+      weight.className = 'indicator-weight';
+      weight.append(text(explanation.defaultWeight === null
+        ? 'Configured contribution unavailable'
+        : `Default contribution +${explanation.defaultWeight}; configured weight unavailable`));
+      card.append(title, description, weight);
+      container.append(card);
     }
   }
 }
@@ -611,6 +895,9 @@ function renderDetails() {
     detailBody.append(createEmptyRow('No finding selected.'));
     findingRiskIndicators.replaceChildren(text('No finding selected.'));
     findingReasons.replaceChildren(text('No finding selected.'));
+    findingObservedFacts.replaceChildren(text('No finding selected.'));
+    relatedFindingsList.replaceChildren(text('No finding selected.'));
+    incidentStateStatus.textContent = '';
     return;
   }
 
@@ -619,22 +906,22 @@ function renderDetails() {
   strong.append(text(finding.clientIp));
   detailSummary.append(
     strong,
-    text(` · ${finding.requestCount} requests · ${finding.suspiciousRequestCount} suspicious · Ban count ${finding.banCount ?? 0} · Highest risk ${finding.highestRiskScore} (${finding.highestRiskSeverity}) · First seen ${formatTimestamp(finding.firstSeen)} · Last seen ${formatTimestamp(finding.lastSeen)}`)
+    text(` · ${finding.requestCount} requests · ${finding.suspiciousRequestCount} detector-flagged · highest heuristic score ${finding.highestRiskScore} (${finding.highestRiskSeverity}) · first ${formatTimestamp(finding.firstSeen)} · last ${formatTimestamp(finding.lastSeen)}`)
   );
+  renderFindingFacts(finding);
   renderFindingIndicators(finding);
+  renderAnalystState(finding);
+  renderRelatedFindings(finding);
   if (document.activeElement !== banCountValue) {
     banCountValue.value = String(finding.banCount ?? 0);
   }
 
-  const visibleEvents = sortItems('details', state.findingEvents.filter(webEvent =>
-    matchesSearch([
-      webEvent.clientIp,
-      webEvent.domain,
-      webEvent.path,
-      webEvent.method,
-      webEvent.detectionReason,
-      ...(webEvent.riskIndicators || [])
-    ])));
+  const visibleEvents = sortItems('details', dashboardModel.filterEvents(state.findingEvents, {
+    query: state.searchQuery,
+    status: state.eventStatusFilter,
+    range: state.eventTimeFilter,
+    domain: state.selectedDomain
+  }));
   if (!visibleEvents.length) {
     detailBody.append(createEmptyRow('No recent events available for this IP.'));
     return;
@@ -685,8 +972,9 @@ function renderIis() {
       ? `${settings.temporaryBanMinutes} minute(s)`
       : 'permanent';
     iisConfigStatus.textContent =
-      `Deny-list changes: ${settings.enableDenyListChanges ? 'enabled' : 'disabled'} · ` +
-      `Dry run: ${settings.dryRun ? 'ON' : 'OFF'} · ` +
+      `Enforcement: ${settings.enforcementMode} · ` +
+      `Deny-list writes: ${settings.canEnforce ? 'enabled' : 'disabled'} · ` +
+      `Legacy dry run: ${settings.dryRun ? 'ON' : 'OFF'} · ` +
       `Ban duration: ${temporaryBan} · ` +
       `Multiple indicators: ${settings.requireMultipleIndicators ? 'required' : 'not required'}`;
   }
@@ -793,7 +1081,7 @@ function renderAccessStatus() {
   const signature = [
     host,
     state.iisStatusInfo
-      ? `${state.iisStatusInfo.enableDenyListChanges}:${state.iisStatusInfo.dryRun}`
+      ? `${state.iisStatusInfo.enableDenyListChanges}:${state.iisStatusInfo.dryRun}:${state.iisStatusInfo.enforcementMode}`
       : `error:${state.iisStatusErrorStatus}`
   ].join('|');
   if (signature === state.accessStatusSignature) return;
@@ -803,13 +1091,13 @@ function renderAccessStatus() {
     appendAccessNotice(
       'warning',
       'Remote access',
-      'The server setting is not exposed by the available API. Remote clients are blocked when Dashboard:RemoteAccessEnabled is false.'
+      'Local dashboard viewing is available, but management APIs still require an authenticated Windows Administrator. Loopback and service elevation do not grant administrator access.'
     );
   } else {
     appendAccessNotice(
-      'good',
+      'warning',
       'Remote access',
-      'This remote browser session reached the dashboard through the server access policy.'
+      'Remote dashboard requests require HTTPS and Windows Authentication. Management APIs require a Windows Administrator.'
     );
   }
 
@@ -819,12 +1107,16 @@ function renderAccessStatus() {
       'Administrator access verified',
       'Administrator-only IIS settings are available for this session.'
     );
-    if (state.iisStatusInfo.dryRun) {
+    if (state.iisStatusInfo.enforcementMode === 'Simulate') {
       appendAccessNotice(
         'warning',
-        'Dry run is ON',
-        'Deny-list actions are logged as intended actions and will not change IIS.'
+        'Simulation mode',
+        'Deny-list actions are recorded as simulated and will not change IIS or ban counts.'
       );
+    }
+
+    if (state.iisStatusInfo.enforcementMode === 'Observe') {
+      appendAccessNotice('warning', 'Observe mode', 'Deny-list requests are audited but do not change IIS.');
     }
 
     if (!state.iisStatusInfo.enableDenyListChanges) {
@@ -1038,11 +1330,14 @@ async function denyFindingOnMatchedSites() {
   }
 
   const updated = await response.json();
-  denyTargetStatus.textContent = updated.dryRun
-    ? `Dry run: would deny ${finding.clientIp} on sites matching ${updated.domains?.join(', ') || 'the finding domains'}.`
-    : `Added to ${updated.sites?.length ?? 0} site(s).`;
+  const didNotEnforce = updated.simulated || updated.observed;
+  denyTargetStatus.textContent = updated.simulated
+    ? `Simulated: would deny ${finding.clientIp} on sites matching ${updated.domains?.join(', ') || 'the finding domains'}.`
+    : updated.observed
+      ? `Observed a deny request for ${finding.clientIp}; IIS was not changed.`
+      : `Added to ${updated.sites?.length ?? 0} site(s).`;
   await refreshIisStatus();
-  if (!updated.dryRun && state.selectedSiteName) {
+  if (!didNotEnforce && state.selectedSiteName) {
     await refreshDeniedIps();
   }
   render();
@@ -1094,6 +1389,14 @@ async function refreshFindings() {
 async function refreshSites() {
   const requestId = ++state.sitesRequestId;
   await refreshIisStatus();
+  if (state.iisStatusErrorStatus === 401 || state.iisStatusErrorStatus === 403) {
+    state.sites = [];
+    state.deniedIps = [];
+    state.selectedSiteName = '';
+    render();
+    return;
+  }
+
   const sites = await fetchJson('/api/iis/sites');
   if (requestId !== state.sitesRequestId) return;
   state.sites = sites;
@@ -1143,6 +1446,39 @@ async function refreshDeniedIps() {
   }
 }
 
+async function confirmDenyPreview(siteName, clientIp, reason) {
+  const finding = state.findings.find(item => item.clientIp === clientIp);
+  const response = await fetch('/api/iis/deny-list/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      siteName,
+      clientIp,
+      reason,
+      evidence: finding?.riskIndicators || []
+    })
+  });
+  if (!response.ok) {
+    throw new Error(`Preview failed (HTTP ${response.status}).`);
+  }
+
+  const preview = await response.json();
+  if (preview.allowListed) {
+    iisStatus.textContent = 'This address matches the configured allow-list and cannot be denied.';
+    return false;
+  }
+
+  const expires = preview.expiresAt ? new Date(preview.expiresAt).toLocaleString() : 'permanent';
+  const sharedSites = preview.otherSitesSharingPools.length
+    ? `Shared application pools affect: ${preview.otherSitesSharingPools.join(', ')}`
+    : 'No other sites share the target application pools.';
+  const evidence = preview.evidence.length ? preview.evidence.join('\n') : 'No risk evidence supplied.';
+  const warnings = preview.warnings.length ? `\n\nWarnings:\n${preview.warnings.join('\n')}` : '';
+  return window.confirm(
+    `${preview.enforcementMode} ${preview.rule} on ${preview.siteName}\nExpiry: ${expires}\nRule state: ${preview.existingRuleState}\nEvidence:\n${evidence}\n${sharedSites}${warnings}\n\nContinue?`
+  );
+}
+
 async function denySelectedFindingIp() {
   if (!state.selectedFindingIp) {
     iisStatus.textContent = 'Select a finding first.';
@@ -1156,6 +1492,7 @@ async function denySelectedFindingIp() {
 
   const clientIp = state.selectedFindingIp;
   const siteName = state.selectedSiteName;
+  if (!await confirmDenyPreview(siteName, clientIp, 'Manual dashboard deny-list action')) return;
   iisStatus.textContent = 'Applying deny-list entry...';
   const response = await fetch(`/api/iis/sites/${escapeSegment(siteName)}/deny-list`, {
     method: 'POST',
@@ -1179,12 +1516,17 @@ async function denySelectedFindingIp() {
   }
 
   const updated = await response.json();
-  if (!updated.dryRun && state.selectedSiteName === siteName) {
+  const didNotEnforce = updated.simulated || updated.observed;
+  if (!didNotEnforce && state.selectedSiteName === siteName) {
     await refreshDeniedIps();
   }
-  iisStatus.textContent = updated.dryRun
-    ? `Dry run: would deny ${clientIp} on ${siteName}.`
-    : `Deny-list entry added for ${clientIp} on ${siteName}.`;
+  iisStatus.textContent = updated.simulated
+    ? `Simulated: would deny ${clientIp} on ${siteName}.`
+    : updated.observed
+      ? `Observed a deny request for ${clientIp} on ${siteName}; IIS was not changed.`
+      : updated.alreadyPresent
+        ? `The deny rule for ${clientIp} on ${siteName} is already present.`
+        : `Deny-list entry added for ${clientIp} on ${siteName}.`;
   await refreshIisStatus();
   render();
 }
@@ -1196,9 +1538,14 @@ async function removeDeniedIp(clientIp) {
   }
 
   const siteName = state.selectedSiteName;
+  if (!window.confirm(`Remove the service-owned deny rule for ${clientIp} from ${siteName}? Unmanaged administrator rules are preserved.`)) {
+    return;
+  }
   iisStatus.textContent = 'Removing deny-list entry...';
-  const response = await fetch(`/api/iis/sites/${escapeSegment(siteName)}/deny-list/${escapeSegment(clientIp)}?reason=${escapeSegment('Manual dashboard removal')}`, {
-    method: 'DELETE'
+  const response = await fetch(`/api/iis/sites/${escapeSegment(siteName)}/deny-list/${escapeSegment(clientIp)}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason: 'Manual dashboard removal' })
   });
 
   if (response.status === 401) {
@@ -1217,17 +1564,20 @@ async function removeDeniedIp(clientIp) {
   }
 
   const updated = await response.json();
-  if (!updated.dryRun && state.selectedSiteName === siteName) {
+  const didNotEnforce = updated.simulated || updated.observed;
+  if (!didNotEnforce && state.selectedSiteName === siteName) {
     await refreshDeniedIps();
   }
-  iisStatus.textContent = updated.dryRun
-    ? `Dry run: would remove ${clientIp} from ${siteName}.`
-    : `Deny-list entry removed for ${clientIp} from ${siteName}.`;
+  iisStatus.textContent = updated.simulated
+    ? `Simulated: would remove ${clientIp} from ${siteName}.`
+    : updated.observed
+      ? `Observed a removal request for ${clientIp} from ${siteName}; IIS was not changed.`
+      : `Deny-list entry removed for ${clientIp} from ${siteName}.`;
   await refreshIisStatus();
   render();
 }
 
-async function denySelectedFindings() {
+function openBulkDenyPreview() {
   const clientIps = [...state.selectedFindingIps];
   if (!clientIps.length) {
     bulkDenyStatus.textContent = 'Select one or more findings first.';
@@ -1238,13 +1588,55 @@ async function denySelectedFindings() {
     return;
   }
 
-  const mode = state.iisStatusInfo.dryRun ? 'dry run' : 'apply';
-  if (!window.confirm(`${mode === 'dry run' ? 'Simulate' : 'Deny'} ${clientIps.length} selected IP address(es)?`)) {
+  const mode = state.iisStatusInfo.enforcementMode;
+  const modeDescription = mode === 'Enforce'
+    ? 'ENFORCE: IIS deny rules may be written for these sources.'
+    : mode === 'Simulate'
+      ? 'SIMULATE: intended actions are recorded; IIS will not be changed.'
+      : 'OBSERVE: requests are audited; IIS will not be changed.';
+  bulkDenyMode.textContent = `${modeDescription} ${clientIps.length} source address(es) selected.`;
+  bulkDenyMode.dataset.mode = String(mode || 'Unavailable').toLowerCase();
+  bulkDenyPreview.replaceChildren();
+  for (const item of dashboardModel.createBulkPreview(state.findings, state.incidents, clientIps)) {
+    const row = document.createElement('li');
+    const source = document.createElement('strong');
+    source.append(text(`${item.clientIp} · ${item.severity} heuristic score ${item.score}`));
+    const scope = document.createElement('span');
+    scope.append(text(`Observed domains: ${item.domains.join(', ') || 'not recorded'}`));
+    const evidence = document.createElement('span');
+    evidence.append(text(`Detector evidence: ${item.evidence.join('; ') || 'none recorded'}`));
+    const analyst = document.createElement('span');
+    analyst.append(text(`Analyst state: ${item.analystStatus}`));
+    row.append(source, scope, evidence, analyst);
+    bulkDenyPreview.append(row);
+  }
+
+  bulkDenyConfirm.textContent = mode === 'Enforce' ? 'Confirm enforced action'
+    : mode === 'Simulate' ? 'Confirm simulation'
+      : 'Confirm observed action';
+  bulkDenyDialog.showModal();
+}
+
+async function executeBulkDeny() {
+  const clientIps = [...state.selectedFindingIps];
+  const reviewedMode = bulkDenyMode.dataset.mode;
+  bulkDenyDialog.close();
+  if (!clientIps.length) return;
+
+  await refreshIisStatus();
+  if (!state.iisStatusInfo?.enableDenyListChanges) {
+    bulkDenyStatus.textContent = 'Deny-list changes are disabled or administrator access is unavailable.';
+    return;
+  }
+  if (String(state.iisStatusInfo.enforcementMode || 'Unavailable').toLowerCase() !== reviewedMode) {
+    bulkDenyStatus.textContent = 'Enforcement mode changed since the review. Confirm the updated mode before continuing.';
+    openBulkDenyPreview();
     return;
   }
 
   let applied = 0;
   let simulated = 0;
+  let observed = 0;
   const failed = [];
   const failedIps = [];
   bulkDenySelected.disabled = true;
@@ -1266,8 +1658,10 @@ async function denySelectedFindings() {
       }
 
       const result = await response.json();
-      if (result.dryRun) {
+      if (result.simulated) {
         simulated++;
+      } else if (result.observed) {
+        observed++;
       } else {
         applied++;
       }
@@ -1283,6 +1677,7 @@ async function denySelectedFindings() {
   const resultSummary = [
     applied ? `${applied} applied` : '',
     simulated ? `${simulated} simulated` : '',
+    observed ? `${observed} observed` : '',
     failed.length ? `${failed.length} failed: ${failed.join(', ')}` : ''
   ].filter(Boolean).join(' · ');
   bulkDenyStatus.textContent = resultSummary || 'No deny-list actions were completed.';
@@ -1364,11 +1759,14 @@ async function openFinding(clientIp) {
 function addEvent(webEvent) {
   if (!state.events.some(existing => existing.id === webEvent.id)) {
     state.events.push(webEvent);
+    const timestamp = Date.parse(webEvent.timestamp);
+    if (Number.isFinite(timestamp)) state.lastEventAt = Math.max(state.lastEventAt, timestamp);
     if (state.events.length > maxEventsInMemory) {
       state.events.splice(0, state.events.length - maxEventsInMemory);
     }
     scheduleFindingsRefresh();
   }
+  renderHealthIndicators();
   queueRender();
 }
 
@@ -1377,11 +1775,17 @@ function queueRender() {
   state.renderFrame = window.requestAnimationFrame(() => {
     state.renderFrame = 0;
     ensureDomainButtons();
-    applyTableUi('events');
     renderEvents();
-    renderCharts();
-    renderAccessStatus();
+    scheduleChartRefresh();
   });
+}
+
+function scheduleChartRefresh() {
+  if (chartRefreshHandle) return;
+  chartRefreshHandle = window.setTimeout(() => {
+    chartRefreshHandle = 0;
+    renderCharts();
+  }, 5000);
 }
 
 function initializeViewTabs() {
@@ -1391,6 +1795,18 @@ function initializeViewTabs() {
       if (button.dataset.view === 'configuration' && !configurationLoaded) {
         loadBackendConfiguration();
       }
+    };
+    button.onkeydown = event => {
+      const currentIndex = viewButtons.indexOf(button);
+      const nextIndex = event.key === 'ArrowRight' ? (currentIndex + 1) % viewButtons.length
+        : event.key === 'ArrowLeft' ? (currentIndex - 1 + viewButtons.length) % viewButtons.length
+          : event.key === 'Home' ? 0
+            : event.key === 'End' ? viewButtons.length - 1
+              : -1;
+      if (nextIndex < 0) return;
+      event.preventDefault();
+      viewButtons[nextIndex].focus();
+      viewButtons[nextIndex].click();
     };
   });
 }
@@ -1412,45 +1828,87 @@ function mergeEvents(events) {
   state.events = [...byId.values()]
     .sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
     .slice(-maxEventsInMemory);
+  state.eventRows.clear();
+  eventBody.replaceChildren();
+  const latestTimestamp = state.events.reduce((latest, webEvent) => Math.max(latest, Date.parse(webEvent.timestamp) || 0), 0);
+  state.lastEventAt = Math.max(state.lastEventAt, latestTimestamp);
   if (byId.size > previousCount) {
     scheduleFindingsRefresh();
   }
   render();
+  renderHealthIndicators();
 }
 
-async function refreshEvents() {
-  const events = await fetchJson(`/api/events?limit=${initialEventLimit}`);
-  mergeEvents(events);
+async function refreshEvents(advanceCursor = true) {
+  const page = await fetchJson(`/api/v2/events?limit=${initialEventLimit}`);
+  mergeEvents(page.items.map(envelope => envelope.payload));
+  const latestCursor = Number(page.lastCursor ?? page.latestCursor ?? 0);
+  if (advanceCursor && Number.isSafeInteger(latestCursor) && latestCursor >= 0) {
+    state.eventCursor = Math.max(state.eventCursor, latestCursor);
+  }
+  return page;
+}
+
+function updateEventCursor(value) {
+  const cursor = Number(value);
+  if (Number.isSafeInteger(cursor) && cursor >= 0) {
+    state.eventCursor = Math.max(state.eventCursor, cursor);
+  }
 }
 
 function connectEventStream() {
   if (state.livePaused || state.eventSource) return;
-  const source = new EventSource('/api/events/stream');
+  const source = new EventSource(`/api/v2/events/stream?afterSequence=${encodeURIComponent(state.eventCursor)}`);
   state.eventSource = source;
 
   source.onopen = () => {
     if (state.eventSource !== source || state.livePaused) return;
     state.reconnectAttempts = 0;
     setConnectionStatus('Live', 'live');
-    streamHint.textContent = 'Connected. Stream recovery loads recent events after reconnects.';
-    refreshEvents().catch(error => {
-      streamHint.textContent = `Live stream is connected, but event recovery failed: ${error.message}`;
+    streamHint.textContent = state.recoveryWarning || 'Connected. Retained events replay from the last received cursor.';
+    refreshFindings().catch(error => {
+      streamHint.textContent = `Live stream is connected, but finding recovery failed: ${error.message}`;
     });
+    refreshIncidents();
+    refreshDashboardHealth();
   };
 
-  source.addEventListener('etw', event => {
+  source.addEventListener('iis.event.v1', event => {
     if (state.eventSource !== source || state.livePaused) return;
     try {
-      addEvent(JSON.parse(event.data));
+      const envelope = JSON.parse(event.data);
+      updateEventCursor(envelope.cursor ?? event.lastEventId);
+      addEvent(envelope.payload);
     } catch (error) {
       streamHint.textContent = `An event could not be read: ${error.message}`;
+    }
+  });
+
+  source.addEventListener('checkpoint', event => updateEventCursor(event.lastEventId));
+
+  source.addEventListener('recovery', event => {
+    if (state.eventSource !== source || state.livePaused) return;
+    try {
+      const recovery = JSON.parse(event.data);
+      updateEventCursor(event.lastEventId);
+      state.recoveryWarning = recovery.reason === 'retention_gap'
+        ? 'History gap: some events after this cursor expired from retention. Showing retained events and continuing live.'
+        : 'Stream recovery: the subscriber fell behind. Replaying retained events from the last received cursor.';
+      streamHint.textContent = state.recoveryWarning;
+      if (recovery.reason === 'retention_gap') {
+        refreshEvents(false).catch(error => {
+          streamHint.textContent = `${state.recoveryWarning} Bounded refresh failed: ${error.message}`;
+        });
+      }
+    } catch (error) {
+      streamHint.textContent = `Stream recovery details could not be read: ${error.message}`;
     }
   });
 
   source.onerror = () => {
     if (state.eventSource !== source || state.livePaused) return;
     setConnectionStatus('Reconnecting', 'reconnecting');
-    streamHint.textContent = 'The browser will retry the event stream automatically.';
+    streamHint.textContent = state.recoveryWarning || 'Reconnecting. Retained events will replay from the last received cursor.';
     if (source.readyState === EventSource.CLOSED && !state.reconnectTimer) {
       const delay = Math.min(30000, 1000 * (2 ** Math.min(state.reconnectAttempts, 5)));
       state.reconnectAttempts++;
@@ -1500,12 +1958,40 @@ function initializeControls() {
   };
   allEvents.onchange = render;
   pauseEvents.onclick = () => setLivePaused(!state.livePaused);
+  eventStatusFilter.onchange = () => {
+    state.eventStatusFilter = eventStatusFilter.value;
+    renderEvents();
+    renderDetails();
+  };
+  eventTimeFilter.onchange = () => {
+    state.eventTimeFilter = eventTimeFilter.value;
+    renderEvents();
+    renderDetails();
+  };
+  incidentStatusFilter.onchange = () => {
+    state.incidentStatusFilter = incidentStatusFilter.value;
+    renderFindings();
+  };
+  incidentStateSave.onclick = () => {
+    saveIncidentAnalysis().catch(error => {
+      incidentStateStatus.textContent = `Unable to save analyst state: ${error.message}`;
+    });
+  };
   selectVisible.onclick = selectVisibleFindings;
-  bulkDenySelected.onclick = () => {
-    denySelectedFindings().catch(error => {
+  bulkDenySelected.onclick = openBulkDenyPreview;
+  bulkDenyConfirm.onclick = () => {
+    executeBulkDeny().catch(error => {
       bulkDenyStatus.textContent = `Bulk deny failed: ${error.message}`;
     });
   };
+  document.querySelector('#bulk-deny-cancel').onclick = () => bulkDenyDialog.close();
+  document.querySelector('#bulk-deny-close').onclick = () => bulkDenyDialog.close();
+  bulkDenyDialog.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      bulkDenyDialog.close();
+    }
+  });
   banCountSave.onclick = () => {
     saveBanCount().catch(error => {
       banCountStatus.textContent = `Save failed: ${error.message}`;
@@ -1554,6 +2040,8 @@ async function initializeDashboard() {
     setConnectionStatus('API unavailable', 'error');
     streamHint.textContent = `Unable to load dashboard data: ${error.message}`;
   }
+
+  await Promise.all([refreshIncidents(), refreshDashboardHealth()]);
 
   try {
     await refreshSites();

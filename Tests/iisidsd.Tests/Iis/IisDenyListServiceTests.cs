@@ -19,19 +19,22 @@ public sealed class IisDenyListServiceTests
             DryRun = true
         });
         var store = new FakeDenyListStore();
-        var service = CreateService(options, store, new FakeSiteDiscoveryService());
+        var writer = new FakeIisDenyListWriter();
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
 
         var succeeded = service.AddDeniedIp("Example Site", "203.0.113.20", "DOMAIN\\admin", "manual review");
 
         Assert.True(succeeded);
-        var audit = Assert.Single(store.Audits);
+        Assert.Contains(store.Audits, audit => audit.Outcome == "requested");
+        var audit = Assert.Single(store.Audits, audit => audit.Outcome == "simulated");
         Assert.Equal("DOMAIN\\admin", audit.Actor);
         Assert.Equal("add", audit.Action);
         Assert.Equal("manual review", audit.Reason);
-        Assert.Equal("dry-run", audit.Outcome);
+        Assert.Equal("simulated", audit.Outcome);
         Assert.True(audit.DryRun);
         Assert.NotNull(audit.ExpiresAt);
         Assert.Empty(store.Expiries);
+        Assert.Equal(0, writer.EnsureCalls);
     }
 
     [Fact]
@@ -50,10 +53,9 @@ public sealed class IisDenyListServiceTests
 
         Assert.Empty(updatedSites);
         Assert.Equal(0, siteDiscovery.GetSitesCalls);
-        var audit = Assert.Single(store.Audits);
+        var audit = Assert.Single(store.Audits, audit => audit.Outcome == "simulated");
         Assert.Equal("*", audit.SiteName);
-        Assert.Contains("example.test", audit.Reason);
-        Assert.Equal("dry-run", audit.Outcome);
+        Assert.Equal("simulated", audit.Outcome);
     }
 
     [Fact]
@@ -71,9 +73,25 @@ public sealed class IisDenyListServiceTests
         var succeeded = service.AddDeniedIp("Example Site", "203.0.113.22", "DOMAIN\\admin", "manual review");
 
         Assert.False(succeeded);
-        var audit = Assert.Single(store.Audits);
+        var audit = Assert.Single(store.Audits, audit => audit.Outcome == "skipped-allow-list");
         Assert.Equal("skipped-allow-list", audit.Outcome);
         Assert.False(audit.DryRun);
+    }
+
+    [Fact]
+    public void AddDeniedIp_WhenMutationMasterSwitchIsOff_AuditsObservationAndDoesNotCallIisWriter()
+    {
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = false, DryRun = false });
+        var store = new FakeDenyListStore();
+        var writer = new FakeIisDenyListWriter();
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
+
+        var succeeded = service.AddDeniedIp("Example Site", "203.0.113.29", "manual", "safety check");
+
+        Assert.False(succeeded);
+        Assert.Contains(store.Audits, audit => audit.Outcome == "requested");
+        Assert.Contains(store.Audits, audit => audit.Outcome == "observed");
+        Assert.Equal(0, writer.EnsureCalls);
     }
 
     [Fact]
@@ -91,11 +109,11 @@ public sealed class IisDenyListServiceTests
 
         var succeeded = service.AddDeniedIp("Example Site", "203.0.113.26", "manual", "manual review");
 
-        Assert.True(succeeded);
+        Assert.False(succeeded);
         Assert.Empty(store.Expiries);
         Assert.Equal(0, writer.PrepareNewEntryCalls);
-        var audit = Assert.Single(store.Audits);
-        Assert.Equal("already-denied-permanent", audit.Outcome);
+        Assert.Contains(store.Audits, audit => audit.Outcome == "attempted");
+        var audit = Assert.Single(store.Audits, audit => audit.Outcome == "pre-existing-unmanaged");
         Assert.Null(audit.ExpiresAt);
     }
 
@@ -117,8 +135,7 @@ public sealed class IisDenyListServiceTests
         Assert.False(succeeded);
         Assert.Empty(store.Expiries);
         Assert.Equal(0, writer.PrepareNewEntryCalls);
-        var audit = Assert.Single(store.Audits);
-        Assert.Equal("existing-allow-rule", audit.Outcome);
+        var audit = Assert.Single(store.Audits, audit => audit.Outcome == "existing-allow-rule");
         Assert.Null(audit.ExpiresAt);
     }
 
@@ -140,7 +157,7 @@ public sealed class IisDenyListServiceTests
         Assert.True(succeeded);
         Assert.Single(store.Expiries);
         Assert.Equal(1, writer.PrepareNewEntryCalls);
-        Assert.NotNull(Assert.Single(store.Audits).ExpiresAt);
+        Assert.NotNull(Assert.Single(store.Audits, audit => audit.Outcome == "succeeded").ExpiresAt);
     }
 
     [Fact]
@@ -150,16 +167,17 @@ public sealed class IisDenyListServiceTests
         var store = new FakeDenyListStore();
         var expiredAt = DateTimeOffset.UtcNow.AddMinutes(-1);
         store.SetExpiry("Example Site", "203.0.113.23", expiredAt);
+        store.SeedManaged("Example Site", "203.0.113.23", expiredAt);
         var service = CreateService(options, store, new FakeSiteDiscoveryService());
 
         var removed = service.RemoveExpiredDeniedIp(new TemporaryDenyListEntry("Example Site", "203.0.113.23", expiredAt));
 
         Assert.False(removed);
         Assert.Equal(expiredAt, store.GetExpiry("Example Site", "203.0.113.23"));
-        var audit = Assert.Single(store.Audits);
+        var audit = Assert.Single(store.Audits, audit => audit.Outcome == "simulated-expiry");
         Assert.Equal("system:expiry-cleaner", audit.Actor);
         Assert.Equal("expire", audit.Action);
-        Assert.Equal("dry-run", audit.Outcome);
+        Assert.Equal("simulated-expiry", audit.Outcome);
     }
 
     [Fact]
@@ -168,6 +186,7 @@ public sealed class IisDenyListServiceTests
         var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
         var store = new FakeDenyListStore();
         store.SetExpiry("Example Site", "203.0.113.24", DateTimeOffset.UtcNow.AddMinutes(5));
+        store.SeedManaged("Example Site", "203.0.113.24", store.GetExpiry("Example Site", "203.0.113.24"));
         var writer = new FakeIisDenyListWriter();
         var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
 
@@ -175,9 +194,8 @@ public sealed class IisDenyListServiceTests
 
         Assert.True(removed);
         Assert.Equal(1, writer.RemoveCalls);
-        Assert.False(writer.RemoveDeniedRulesOnly);
         Assert.Null(store.GetExpiry("Example Site", "203.0.113.24"));
-        Assert.Equal("succeeded", Assert.Single(store.Audits).Outcome);
+        Assert.Contains(store.Audits, audit => audit.Outcome == "succeeded");
     }
 
     [Fact]
@@ -187,6 +205,7 @@ public sealed class IisDenyListServiceTests
         var store = new FakeDenyListStore();
         var expiredAt = DateTimeOffset.UtcNow.AddMinutes(-1);
         store.SetExpiry("Example Site", "203.0.113.24", expiredAt);
+        store.SeedManaged("Example Site", "203.0.113.24", expiredAt);
         var writer = new FakeIisDenyListWriter();
         var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
 
@@ -194,9 +213,8 @@ public sealed class IisDenyListServiceTests
 
         Assert.True(removed);
         Assert.Equal(1, writer.RemoveCalls);
-        Assert.True(writer.RemoveDeniedRulesOnly);
         Assert.Null(store.GetExpiry("Example Site", "203.0.113.24"));
-        Assert.Equal("succeeded", Assert.Single(store.Audits).Outcome);
+        Assert.Contains(store.Audits, audit => audit.Outcome == "expired");
     }
 
     [Fact]
@@ -206,6 +224,7 @@ public sealed class IisDenyListServiceTests
         var store = new FakeDenyListStore();
         var expiredAt = DateTimeOffset.UtcNow.AddMinutes(-1);
         store.SetExpiry("Example Site", "203.0.113.24", expiredAt);
+        store.SeedManaged("Example Site", "203.0.113.24", expiredAt);
         var writer = new FakeIisDenyListWriter
         {
             RemoveStatus = IisDenyListMutationStatus.Failed,
@@ -217,7 +236,172 @@ public sealed class IisDenyListServiceTests
 
         Assert.False(removed);
         Assert.Equal(expiredAt, store.GetExpiry("Example Site", "203.0.113.24"));
-        Assert.Equal("failed", Assert.Single(store.Audits).Outcome);
+        Assert.Contains(store.Audits, audit => audit.Outcome == "failed");
+    }
+
+    [Fact]
+    public void AddDeniedIp_AllowListedIpv4AndIpv6CannotReachWriter()
+    {
+        var options = Options.Create(new IisAdminOptions
+        {
+            EnableDenyListChanges = true,
+            DryRun = false,
+            AllowList = ["192.0.2.0/24", "2001:db8:abcd::/48"]
+        });
+        var store = new FakeDenyListStore();
+        var writer = new FakeIisDenyListWriter();
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
+
+        Assert.False(service.AddDeniedIp("Example Site", "192.0.2.44"));
+        Assert.False(service.AddDeniedIp("Example Site", "2001:db8:abcd::44"));
+
+        Assert.Equal(0, writer.EnsureCalls);
+        Assert.Equal(2, store.Audits.Count(audit => audit.Outcome == "skipped-allow-list"));
+    }
+
+    [Theory]
+    [InlineData("Observe", false, "observed")]
+    [InlineData("Simulate", true, "simulated")]
+    public void AddDeniedIp_ObserveAndSimulateNeverMutateIis(string mode, bool expectedResult, string outcome)
+    {
+        var options = Options.Create(new IisAdminOptions
+        {
+            EnableDenyListChanges = true,
+            DryRun = false,
+            EnforcementMode = mode
+        });
+        var store = new FakeDenyListStore();
+        var writer = new FakeIisDenyListWriter();
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
+
+        Assert.Equal(expectedResult, service.AddDeniedIp("Example Site", "203.0.113.40"));
+
+        Assert.Equal(0, writer.EnsureCalls);
+        Assert.Contains(store.Audits, audit => audit.Outcome == outcome);
+    }
+
+    [Fact]
+    public void RemoveDeniedIp_DoesNotRemoveUnownedAdministratorRule()
+    {
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
+        var store = new FakeDenyListStore();
+        var writer = new FakeIisDenyListWriter
+        {
+            Inspection = new("Example Site", "203.0.113.41", "denied", [], [])
+        };
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
+
+        var status = service.RemoveDeniedIpWithStatus("Example Site", "203.0.113.41");
+
+        Assert.Equal(DenyListRemovalStatus.NotServiceOwned, status);
+        Assert.Equal(0, writer.RemoveCalls);
+        Assert.Contains(store.Audits, audit => audit.Outcome == "skipped-not-service-owned");
+    }
+
+    [Fact]
+    public void PreviewDeniedIp_ReportsRuleExpiryEvidenceAndSharedPoolImpactWithoutMutation()
+    {
+        var options = Options.Create(new IisAdminOptions
+        {
+            EnableDenyListChanges = true,
+            DryRun = false,
+            TemporaryBanMinutes = 15
+        });
+        var store = new FakeDenyListStore();
+        var writer = new FakeIisDenyListWriter
+        {
+            Inspection = new IisDenyListInspection(
+                "Example Site",
+                "203.0.113.42",
+                "missing",
+                ["SharedPool"],
+                ["Other Site"])
+        };
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
+
+        var preview = Assert.IsType<DenyListPreview>(service.PreviewDeniedIp(
+            new DenyListPreviewRequest("Example Site", "203.0.113.42", "review", ["multiple indicators"]),
+            "DOMAIN\\admin"));
+
+        Assert.True(preview.WouldMutate);
+        Assert.Equal("ipAddress=203.0.113.42; allowed=false", preview.Rule);
+        Assert.InRange(preview.ExpiresAt!.Value, DateTimeOffset.UtcNow.AddMinutes(14), DateTimeOffset.UtcNow.AddMinutes(16));
+        Assert.Contains("multiple indicators", preview.Evidence);
+        Assert.Equal("SharedPool", Assert.Single(preview.ApplicationPools));
+        Assert.Equal("Other Site", Assert.Single(preview.OtherSitesSharingPools));
+        Assert.Contains(preview.Warnings, warning => warning.Contains("shared", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(0, writer.EnsureCalls);
+        Assert.Single(store.Audits);
+    }
+
+    [Fact]
+    public void AddDeniedIp_RetriesBoundedTransientIisFailureAndCompletesOwnership()
+    {
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
+        var store = new FakeDenyListStore();
+        var writer = new FakeIisDenyListWriter();
+        writer.EnsureResults.Enqueue(new IisDenyListMutationResult(
+            IisDenyListMutationStatus.Failed,
+            new IOException("transient IIS configuration lock")));
+        writer.EnsureResults.Enqueue(new IisDenyListMutationResult(IisDenyListMutationStatus.Added));
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
+
+        Assert.True(service.AddDeniedIp("Example Site", "203.0.113.43"));
+
+        Assert.Equal(2, writer.EnsureCalls);
+        Assert.Equal("active", store.GetManagedDeny("Example Site", "203.0.113.43")?.State);
+        Assert.Contains(store.Audits, audit => audit.Outcome == "succeeded");
+    }
+
+    [Fact]
+    public void RemoveDeniedIp_AlreadyRemovedRuleClearsOnlyOwnedMetadata()
+    {
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
+        var store = new FakeDenyListStore();
+        store.SeedManaged("Example Site", "203.0.113.44", null);
+        var writer = new FakeIisDenyListWriter { RemoveStatus = IisDenyListMutationStatus.NotFound };
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
+
+        Assert.True(service.RemoveDeniedIp("Example Site", "203.0.113.44"));
+
+        Assert.Null(store.GetManagedDeny("Example Site", "203.0.113.44"));
+        Assert.Contains(store.Audits, audit => audit.Outcome == "already-removed");
+    }
+
+    [Fact]
+    public void ReconcilePendingAdd_PreservesAmbiguousDeniedRuleForAdministratorReview()
+    {
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
+        var store = new FakeDenyListStore();
+        store.SeedPending("Example Site", "203.0.113.45", null, "pending-add", 7);
+        var writer = new FakeIisDenyListWriter
+        {
+            Inspection = new IisDenyListInspection("Example Site", "203.0.113.45", "denied", [], [])
+        };
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
+
+        service.ReconcilePendingManagedDenies();
+
+        Assert.Equal("recovery-required", store.GetManagedDeny("Example Site", "203.0.113.45")?.State);
+        Assert.Contains(store.Audits, audit => audit.Action == "recover" && audit.Outcome == "recovery-required");
+    }
+
+    [Fact]
+    public void ReconcilePendingRemove_ClearsJournalAfterIisRemovalCompletedBeforeDatabaseCommit()
+    {
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
+        var store = new FakeDenyListStore();
+        store.SeedPending("Example Site", "203.0.113.46", DateTimeOffset.UtcNow.AddMinutes(-1), "pending-remove", 8);
+        var writer = new FakeIisDenyListWriter
+        {
+            Inspection = new IisDenyListInspection("Example Site", "203.0.113.46", "missing", [], [])
+        };
+        var service = CreateService(options, store, new FakeSiteDiscoveryService(), denyListWriter: writer);
+
+        service.ReconcilePendingManagedDenies();
+
+        Assert.Null(store.GetManagedDeny("Example Site", "203.0.113.46"));
+        Assert.Contains(store.Audits, audit => audit.Action == "recover" && audit.Outcome == "reverted");
     }
 
     private static IisDenyListService CreateService(
@@ -280,32 +464,42 @@ public sealed class IisDenyListServiceTests
         public IisDenyListMutationStatus Status { get; init; } = IisDenyListMutationStatus.Added;
         public IisDenyListMutationStatus RemoveStatus { get; init; } = IisDenyListMutationStatus.Removed;
         public Exception? RemoveException { get; init; }
+        public IisDenyListInspection Inspection { get; init; } = new("Example Site", "203.0.113.1", "missing", [], []);
+        public Queue<IisDenyListMutationResult> EnsureResults { get; } = new();
+        public int EnsureCalls { get; private set; }
         public int PrepareNewEntryCalls { get; private set; }
         public int RemoveCalls { get; private set; }
-        public bool RemoveDeniedRulesOnly { get; private set; }
+
+        public IisDenyListInspection Inspect(string siteName, string clientIp)
+            => Inspection with { SiteName = siteName, ClientIp = clientIp };
 
         public IisDenyListMutationResult EnsureDenied(string siteName, string clientIp, Action prepareNewEntry)
         {
-            if (Status == IisDenyListMutationStatus.Added)
+            EnsureCalls++;
+            var result = EnsureResults.Count > 0
+                ? EnsureResults.Dequeue()
+                : new IisDenyListMutationResult(Status);
+            if (result.Status is IisDenyListMutationStatus.Added or IisDenyListMutationStatus.Failed)
             {
                 PrepareNewEntryCalls++;
                 prepareNewEntry();
             }
 
-            return new IisDenyListMutationResult(Status);
+            return result;
         }
 
-        public IisDenyListMutationResult RemoveDenied(string siteName, string clientIp, bool deniedRulesOnly = false)
+        public IisDenyListMutationResult RemoveDenied(string siteName, string clientIp)
         {
             RemoveCalls++;
-            RemoveDeniedRulesOnly = deniedRulesOnly;
             return new IisDenyListMutationResult(RemoveStatus, RemoveException);
         }
     }
 
     private sealed class FakeDenyListStore : IDenyListStore
     {
+        public IDisposable AcquireMutationLock() => new NoopDisposable();
         private readonly Dictionary<(string Site, string Ip), DateTimeOffset> _expiries = [];
+        private readonly Dictionary<(string Site, string Ip), ManagedDenyListEntry> _managed = [];
         private long _nextAuditId;
 
         public List<DenyListAuditRecord> Audits { get; } = [];
@@ -317,6 +511,19 @@ public sealed class IisDenyListServiceTests
             Audits.Add(record with { Id = id });
             return id;
         }
+
+        public long RecordAudit(DenyListAuditRecord record)
+        {
+            var id = ++_nextAuditId;
+            Audits.Add(record with { Id = id });
+            return id;
+        }
+
+        public void SeedManaged(string siteName, string clientIp, DateTimeOffset? expiresAt)
+            => _managed[(siteName, clientIp)] = new ManagedDenyListEntry(siteName, clientIp, expiresAt, "active", 0);
+
+        public void SeedPending(string siteName, string clientIp, DateTimeOffset? expiresAt, string state, long auditId)
+            => _managed[(siteName, clientIp)] = new ManagedDenyListEntry(siteName, clientIp, expiresAt, state, auditId);
 
         public void CompleteAudit(long auditId, string outcome)
         {
@@ -346,6 +553,57 @@ public sealed class IisDenyListServiceTests
         public void RemoveExpiry(string siteName, string clientIp)
             => _expiries.Remove((siteName, clientIp));
 
+        public ManagedDenyListEntry? GetManagedDeny(string siteName, string clientIp)
+            => _managed.TryGetValue((siteName, clientIp), out var entry) ? entry : null;
+
+        public IReadOnlyList<ManagedDenyListEntry> GetPendingManagedDenies(int limit)
+            => _managed.Values.Where(entry => entry.State != "active").Take(limit).ToArray();
+
+        public bool TryPrepareManagedDeny(ManagedDenyListEntry entry)
+            => _managed.TryAdd((entry.SiteName, entry.ClientIp), entry);
+
+        public bool CompleteManagedDeny(string siteName, string clientIp, DateTimeOffset? expiresAt, long auditId)
+        {
+            if (!_managed.ContainsKey((siteName, clientIp)))
+            {
+                return false;
+            }
+
+            _managed[(siteName, clientIp)] = new ManagedDenyListEntry(siteName, clientIp, expiresAt, "active", auditId);
+            RemoveExpiry(siteName, clientIp);
+            if (expiresAt is { } expiry)
+            {
+                SetExpiry(siteName, clientIp, expiry);
+            }
+
+            return true;
+        }
+
+        public bool TryTransitionManagedDeny(string siteName, string clientIp, string expectedState, long expectedAuditId, string state, long auditId)
+        {
+            if (!_managed.TryGetValue((siteName, clientIp), out var entry) ||
+                entry.State != expectedState || entry.AuditId != expectedAuditId)
+            {
+                return false;
+            }
+
+            _managed[(siteName, clientIp)] = entry with { State = state, AuditId = auditId };
+            return true;
+        }
+
+        public bool TryRemoveManagedDeny(string siteName, string clientIp, string expectedState, long expectedAuditId)
+        {
+            if (!_managed.TryGetValue((siteName, clientIp), out var entry) ||
+                entry.State != expectedState || entry.AuditId != expectedAuditId)
+            {
+                return false;
+            }
+
+            _managed.Remove((siteName, clientIp));
+            RemoveExpiry(siteName, clientIp);
+            return true;
+        }
+
         public IReadOnlyList<TemporaryDenyListEntry> GetExpired(DateTimeOffset now, int limit, TemporaryDenyListEntry? after = null)
             => _expiries
                 .Where(entry => entry.Value <= now)
@@ -361,5 +619,10 @@ public sealed class IisDenyListServiceTests
                        string.Compare(entry.ClientIp, after.ClientIp, StringComparison.OrdinalIgnoreCase) > 0))))
                 .Take(limit)
                 .ToArray();
+
+        private sealed class NoopDisposable : IDisposable
+        {
+            public void Dispose() { }
+        }
     }
 }

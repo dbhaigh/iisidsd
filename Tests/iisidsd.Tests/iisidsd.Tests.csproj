@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,6 +22,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\iisidsd.csproj" />
+    <ProjectReference Include="..\DetectionEvaluation\DetectionEvaluation.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\DetectionEvaluation\Fixtures\**\*.json" Link="Evaluation\Fixtures\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\appsettings.json" Link="Evaluation\appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\docs\reports\detection-evaluation-baseline.json" Link="Evaluation\detection-evaluation-baseline.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -50,7 +50,7 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
             Detection = ReadSection(root, "Detection", new DetectionOptions()),
             Storage = ReadSection(root, "Storage", new StorageOptions()),
             IisAdmin = ReadSection(root, "IisAdmin", new IisAdminOptions()),
-            Dashboard = ReadSection(root, "Dashboard", new DashboardSettings()),
+            Dashboard = ReadSection(root, DashboardOptions.SectionName, new DashboardOptions()),
             Tray = ReadSection(root, "Tray", new TrayOptions()),
             OpenTelemetry = ReadSection(root, "OpenTelemetry", new OpenTelemetrySettings())
         };
@@ -241,6 +241,7 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
         ValidateDataAnnotations(configuration.Detection, "settings.Detection", errors);
         ValidateDataAnnotations(configuration.Storage, "settings.Storage", errors);
         ValidateDataAnnotations(configuration.IisAdmin, "settings.IisAdmin", errors);
+        ValidateDataAnnotations(configuration.Dashboard, "settings.Dashboard", errors);
         ValidateDataAnnotations(configuration.Tray, "settings.Tray", errors);
         if (configuration.Logging.LogLevel.Count == 0)
         {
@@ -261,6 +262,16 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
             !IisIpAllowList.IsValidAllowList(configuration.IisAdmin.AllowList))
         {
             AddError(errors, "settings.IisAdmin.AllowList", "AllowList must contain only valid IP addresses or CIDR ranges.");
+        }
+
+        if (!IisAdminOptions.IsValidEnforcementMode(configuration.IisAdmin.EnforcementMode))
+        {
+            AddError(errors, "settings.IisAdmin.EnforcementMode", "EnforcementMode must be Observe, Simulate, or Enforce.");
+        }
+
+        if (!configuration.Dashboard.TryGetCanonicalAllowedHosts(out _))
+        {
+            AddError(errors, "settings.Dashboard.AllowedHosts", "AllowedHosts must contain valid hostnames or exact IP addresses without ports or wildcards.");
         }
 
         if (!Uri.TryCreate(configuration.Tray.BrowserUrl, UriKind.Absolute, out var browserUri) ||
@@ -394,7 +405,7 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
         public DetectionOptions Detection { get; init; } = new();
         public StorageOptions Storage { get; init; } = new();
         public IisAdminOptions IisAdmin { get; init; } = new();
-        public DashboardSettings Dashboard { get; init; } = new();
+        public DashboardOptions Dashboard { get; init; } = new();
         public TrayOptions Tray { get; init; } = new();
         public OpenTelemetrySettings OpenTelemetry { get; init; } = new();
     }
@@ -406,11 +417,6 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
             ["Default"] = "Information",
             ["Microsoft.Hosting.Lifetime"] = "Information"
         };
-    }
-
-    private sealed record DashboardSettings
-    {
-        public bool RemoteAccessEnabled { get; init; }
     }
 
     private sealed record OpenTelemetrySettings

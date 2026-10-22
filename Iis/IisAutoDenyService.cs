@@ -19,11 +19,7 @@ public sealed class IisAutoDenyService(
 
     public void Apply(SecurityEvent securityEvent)
     {
-        if (!adminOptions.Value.EnableDenyListChanges)
-        {
-            return;
-        }
-
+        var policy = adminOptions.Value.GetEnforcementPolicy();
         var indicators = securityEvent.RiskIndicators ?? [];
         var distinctIndicators = indicators.Distinct(StringComparer.Ordinal).ToArray();
         var repeatedNotFound = distinctIndicators.Contains(RepeatedNotFoundIndicator, StringComparer.Ordinal);
@@ -41,29 +37,25 @@ public sealed class IisAutoDenyService(
             return;
         }
 
-        if (ipAllowList.Contains(securityEvent.ClientIp))
-        {
-            logger.LogInformation(
-                "Automatic deny-list action skipped for an allow-listed IP. ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason}",
-                securityEvent.ClientIp,
-                securityEvent.Domain,
-                securityEvent.RiskScore,
-                securityEvent.RiskSeverity,
-                securityEvent.DetectionReason);
-            return;
-        }
-
         var reason = $"{securityEvent.DetectionReason ?? "Suspicious activity"}; indicators: {string.Join(", ", distinctIndicators)}";
+        var allowListed = ipAllowList.Contains(securityEvent.ClientIp);
         var updatedSites = denyListService.AddDeniedIpToDomains(
             securityEvent.ClientIp,
             [securityEvent.Domain],
             "system:auto-deny",
             reason,
             securityEvent);
-        if (updatedSites.Count == 0 && !adminOptions.Value.DryRun)
+
+        if (allowListed)
         {
-            logger.LogWarning(
-                "Automatic deny-list update found no matching IIS sites. ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason}",
+            return;
+        }
+
+        if (!policy.CanMutate)
+        {
+            logger.LogInformation(
+                "Automatic deny-list action evaluated in {EnforcementMode} mode. ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason}",
+                policy.Mode,
                 securityEvent.ClientIp,
                 securityEvent.Domain,
                 securityEvent.RiskScore,
@@ -72,10 +64,10 @@ public sealed class IisAutoDenyService(
             return;
         }
 
-        if (adminOptions.Value.DryRun)
+        if (updatedSites.Count == 0)
         {
-            logger.LogInformation(
-                "Dry-run automatic deny-list action. ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason}",
+            logger.LogWarning(
+                "Automatic deny-list update found no matching IIS sites. ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason}",
                 securityEvent.ClientIp,
                 securityEvent.Domain,
                 securityEvent.RiskScore,

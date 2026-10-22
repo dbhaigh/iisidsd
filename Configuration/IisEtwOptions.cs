@@ -16,4 +16,6 @@ public sealed class IisEtwOptions
     public int SubscriptionBufferSize { get; set; } = 1_000;
     [Range(1, int.MaxValue)]
     public int IngestionBufferSize { get; set; } = 10_000;
+    [Range(1, 1024)]
+    public int ProcessingBatchSize { get; set; } = 64;
 }

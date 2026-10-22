@@ -47,6 +47,11 @@ public sealed class FindingPrunerService(
                     attempt + 1);
                 await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt), cancellationToken);
             }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogError(exception, "Unable to prune expired findings.");
+                return null;
+            }
         }
 
         return null;

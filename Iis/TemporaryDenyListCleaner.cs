@@ -18,8 +18,14 @@ public sealed class TemporaryDenyListCleaner(
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
         do
         {
-            if (adminOptions.Value.EnableDenyListChanges)
+            var policy = adminOptions.Value.GetEnforcementPolicy();
+            if (policy.CanMutate || policy.IsSimulation)
             {
+                if (policy.CanMutate)
+                {
+                    denyListService.ReconcilePendingManagedDenies();
+                }
+
                 TemporaryDenyListEntry? after = null;
                 while (!stoppingToken.IsCancellationRequested)
                 {
@@ -31,11 +37,15 @@ public sealed class TemporaryDenyListCleaner(
 
                     foreach (var entry in expiredEntries)
                     {
-                        if (adminOptions.Value.DryRun)
+                        if (policy.IsSimulation)
                         {
                             if (_dryRunActionsLogged.Add(entry))
                             {
                                 denyListService.RemoveExpiredDeniedIp(entry);
+                                if (_dryRunActionsLogged.Count > 10000)
+                                {
+                                    _dryRunActionsLogged.Clear();
+                                }
                             }
                         }
                         else if (!denyListService.RemoveExpiredDeniedIp(entry))

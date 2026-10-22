@@ -10,8 +10,8 @@ public sealed class DashboardAccessPolicyTests
     [InlineData(false, false, false, DashboardAccessDecision.Forbidden)]
     [InlineData(true, false, false, DashboardAccessDecision.Forbidden)]
     [InlineData(true, false, true, DashboardAccessDecision.AuthenticationRequired)]
-    [InlineData(true, true, false, DashboardAccessDecision.Allowed)]
-    [InlineData(true, true, true, DashboardAccessDecision.Allowed)]
+    [InlineData(true, true, false, DashboardAccessDecision.Forbidden)]
+    [InlineData(true, true, true, DashboardAccessDecision.AuthenticationRequired)]
     public void Evaluate_ReturnsExpectedAccessDecision(
         bool remoteAccessEnabled,
         bool isLocalRequest,
@@ -34,22 +34,13 @@ public sealed class DashboardAccessPolicyTests
         Assert.False(DashboardAccessPolicy.IsWindowsAdministrator(principal));
     }
 
-    [Theory]
-    [InlineData(true, true, true)]
-    [InlineData(true, false, false)]
-    [InlineData(false, true, false)]
-    public void CanAccessAdministratorFeatures_UsesElevatedHostOnlyForLocalRequests(
-        bool isLocalRequest,
-        bool hostIsAdministrator,
-        bool expected)
+    [Fact]
+    public void CanAccessAdministratorFeatures_DoesNotInferCallerTrustFromAnAdministratorRoleClaim()
     {
-        var principal = new ClaimsPrincipal(new ClaimsIdentity());
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimsIdentity.DefaultRoleClaimType, "Administrators")],
+            authenticationType: "test"));
 
-        var canAccess = DashboardAccessPolicy.CanAccessAdministratorFeatures(
-            principal,
-            isLocalRequest,
-            hostIsAdministrator);
-
-        Assert.Equal(expected, canAccess);
+        Assert.False(DashboardAccessPolicy.CanAccessAdministratorFeatures(principal));
     }
 }

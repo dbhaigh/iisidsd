@@ -1,0 +1,214 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "iisidsd-synthetic-baseline-v1",
+  "description": "Deterministic synthetic IIS-like request sequences for regression and comparative evaluation. All domains use .invalid and all addresses are documentation-only ranges.",
+  "labelQuality": [
+    "All records are synthetic; no customer, production, or personally identifying data is included.",
+    "No sanitized production corpus was supplied; the versioned fixture format can also replay sanitized IIS event rows when such data is approved and available.",
+    "Labels are expected event-level analyst judgments for these constructed scenarios, not verified incident ground truth.",
+    "Authentication identity, account outcome, and request headers other than the captured UserAgent field are unavailable to the detector; credential-stuffing labels are intentionally limited to repeated 401 responses from one source.",
+    "Slow, distributed, and rotating-source scenarios are sequence-level hostile hypotheses; individual requests can be indistinguishable from legitimate traffic.",
+    "Each scenario has a fresh detector and in-memory event history; sequence behavior is replayed within each scenario, without history leaking across scenarios.",
+    "The dataset is deliberately small and scenario-balanced rather than prevalence-representative, so aggregate metrics must not be interpreted as expected production accuracy."
+  ],
+  "scenarios": [
+    {
+      "id": "normal-browsing-static-assets",
+      "class": "benign_browsing",
+      "description": "Successful page and common static assets from an ordinary browser.",
+      "events": [
+        { "id": "browse-home", "timestamp": "2026-10-20T12:00:00Z", "path": "/", "clientIp": "192.0.2.10", "statusCode": 200, "userAgent": "Mozilla/5.0" },
+        { "id": "browse-css", "timestamp": "2026-10-20T12:00:00.100Z", "path": "/assets/site.css", "clientIp": "192.0.2.10", "statusCode": 200, "userAgent": "Mozilla/5.0" },
+        { "id": "browse-js", "timestamp": "2026-10-20T12:00:00.200Z", "path": "/assets/app.js", "clientIp": "192.0.2.10", "statusCode": 200, "userAgent": "Mozilla/5.0" }
+      ]
+    },
+    {
+      "id": "legitimate-not-found",
+      "class": "legitimate_404",
+      "description": "A single user follows a stale link; a 404 is not itself hostile ground truth.",
+      "events": [
+        { "id": "not-found-one", "timestamp": "2026-10-20T12:01:00Z", "path": "/old-release-notes", "clientIp": "192.0.2.11", "statusCode": 404, "userAgent": "Mozilla/5.0", "expectedSuspicious": false }
+      ]
+    },
+    {
+      "id": "legitimate-authentication-failures",
+      "class": "legitimate_auth_failure",
+      "description": "Two mistyped-password responses without account or identity fields.",
+      "events": [
+        { "id": "auth-failure", "timestamp": "2026-10-20T12:02:00Z", "path": "/account/sign-in", "clientIp": "192.0.2.12", "statusCode": 401, "userAgent": "Mozilla/5.0", "repeat": 2, "intervalMilliseconds": 3000, "expectedSuspicious": false }
+      ]
+    },
+    {
+      "id": "vulnerability-scanning-probes",
+      "class": "vulnerability_scanning",
+      "description": "Common CMS, source-control, and exposed-configuration probes.",
+      "events": [
+        { "id": "probe-wp", "timestamp": "2026-10-20T12:03:00Z", "path": "/wp-login.php", "clientIp": "198.51.100.20", "statusCode": 404, "userAgent": "Nuclei/3.0", "expectedSuspicious": true },
+        { "id": "probe-git", "timestamp": "2026-10-20T12:03:01Z", "path": "/.git/config", "clientIp": "198.51.100.20", "statusCode": 404, "userAgent": "Nuclei/3.0", "expectedSuspicious": true },
+        { "id": "probe-env", "timestamp": "2026-10-20T12:03:02Z", "path": "/.env", "clientIp": "198.51.100.20", "statusCode": 404, "userAgent": "Nuclei/3.0", "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "traversal-and-encoded-traversal",
+      "class": "directory_traversal",
+      "description": "Literal, percent-encoded, and multiply encoded traversal strings.",
+      "events": [
+        { "id": "traversal-literal", "timestamp": "2026-10-20T12:04:00Z", "path": "/download/../../windows/win.ini", "clientIp": "198.51.100.21", "statusCode": 400, "expectedSuspicious": true },
+        { "id": "traversal-encoded", "timestamp": "2026-10-20T12:04:01Z", "path": "/download/%2e%2e%2fwindows/win.ini", "clientIp": "198.51.100.21", "statusCode": 400, "expectedSuspicious": true },
+        { "id": "traversal-double-encoded", "timestamp": "2026-10-20T12:04:02Z", "path": "/download/%252e%252e%252fwindows/win.ini", "clientIp": "198.51.100.21", "statusCode": 400, "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "sql-injection-markers",
+      "class": "sql_injection",
+      "description": "Configured UNION SELECT and time-delay SQL markers.",
+      "events": [
+        { "id": "sql-union", "timestamp": "2026-10-20T12:05:00Z", "path": "/search?q=union%20select%20name", "clientIp": "198.51.100.22", "statusCode": 200, "expectedSuspicious": true },
+        { "id": "sql-sleep", "timestamp": "2026-10-20T12:05:01Z", "path": "/search?q=sleep(5)", "clientIp": "198.51.100.22", "statusCode": 200, "expectedSuspicious": true },
+        { "id": "sql-benchmark", "timestamp": "2026-10-20T12:05:02Z", "path": "/search?q=benchmark(1000000)", "clientIp": "198.51.100.22", "statusCode": 200, "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "command-injection-markers",
+      "class": "command_injection",
+      "description": "Configured command and shell execution markers in request paths.",
+      "events": [
+        { "id": "command-cmd", "timestamp": "2026-10-20T12:06:00Z", "path": "/tools/cmd.exe?cmd=dir", "clientIp": "198.51.100.23", "statusCode": 400, "expectedSuspicious": true },
+        { "id": "command-powershell", "timestamp": "2026-10-20T12:06:01Z", "path": "/tools/powershell?exec=whoami", "clientIp": "198.51.100.23", "statusCode": 400, "expectedSuspicious": true },
+        { "id": "command-exec", "timestamp": "2026-10-20T12:06:02Z", "path": "/tools/run?exec=id", "clientIp": "198.51.100.23", "statusCode": 400, "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "credential-stuffing-like-auth-burst",
+      "class": "credential_stuffing_like",
+      "description": "Repeated authentication failures from one client; the label describes a pattern hypothesis only.",
+      "events": [
+        { "id": "credential-attempt", "timestamp": "2026-10-20T12:07:00Z", "path": "/account/sign-in", "clientIp": "198.51.100.24", "statusCode": 401, "userAgent": "Mozilla/5.0", "repeat": 8, "intervalMilliseconds": 500, "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "high-request-rate",
+      "class": "high_request_rate",
+      "description": "A single source crosses the configured per-IP rate threshold while repeatedly requesting a stable API resource.",
+      "activityStartEventId": "rate-normal-001",
+      "events": [
+        { "id": "rate-normal", "timestamp": "2026-10-20T12:08:00Z", "path": "/api/profile", "clientIp": "198.51.100.25", "statusCode": 200, "repeat": 60, "intervalMilliseconds": 100, "expectedSuspicious": false },
+        { "id": "rate-threshold-crossed", "timestamp": "2026-10-20T12:08:06Z", "path": "/api/profile", "clientIp": "198.51.100.25", "statusCode": 200, "repeat": 5, "intervalMilliseconds": 100, "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "unique-path-enumeration",
+      "class": "unique_path_enumeration",
+      "description": "Enumeration crosses the configured unique normalized path threshold.",
+      "activityStartEventId": "enum-benign-001",
+      "events": [
+        { "id": "enum-benign", "timestamp": "2026-10-20T12:09:00Z", "path": "/catalog/item-{index}", "clientIp": "198.51.100.26", "statusCode": 200, "repeat": 19, "intervalMilliseconds": 100, "expectedSuspicious": false },
+        { "id": "enum-crossed", "timestamp": "2026-10-20T12:09:01.900Z", "path": "/catalog/item-{index}", "clientIp": "198.51.100.26", "statusCode": 200, "repeat": 2, "intervalMilliseconds": 100, "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "slow-reconnaissance",
+      "class": "slow_reconnaissance",
+      "description": "Low-and-slow benign-looking paths from one source, spaced outside short detector windows.",
+      "activityStartEventId": "slow-recon-1",
+      "events": [
+        { "id": "slow-recon-1", "timestamp": "2026-10-20T12:10:00Z", "path": "/public/catalog", "clientIp": "198.51.100.27", "statusCode": 200, "expectedSuspicious": true },
+        { "id": "slow-recon-2", "timestamp": "2026-10-20T12:12:00Z", "path": "/public/archive", "clientIp": "198.51.100.27", "statusCode": 200, "expectedSuspicious": true },
+        { "id": "slow-recon-3", "timestamp": "2026-10-20T12:14:00Z", "path": "/public/search", "clientIp": "198.51.100.27", "statusCode": 200, "expectedSuspicious": true },
+        { "id": "slow-recon-4", "timestamp": "2026-10-20T12:16:00Z", "path": "/public/archive/2025", "clientIp": "198.51.100.27", "statusCode": 200, "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "distributed-reconnaissance",
+      "class": "distributed_reconnaissance",
+      "description": "A sequence-level reconnaissance label spread across five sources, each below local thresholds.",
+      "activityStartEventId": "distributed-recon-001",
+      "events": [
+        { "id": "distributed-recon", "timestamp": "2026-10-20T12:18:00Z", "path": "/public/record-{index}", "clientIps": ["198.51.100.30", "198.51.100.31", "198.51.100.32", "198.51.100.33", "198.51.100.34"], "statusCode": 200, "repeat": 15, "intervalMilliseconds": 15000, "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "rotating-source-reconnaissance",
+      "class": "rotating_source_reconnaissance",
+      "description": "Distinct sources make one benign-looking request each, preventing per-IP aggregation.",
+      "activityStartEventId": "rotating-recon-001",
+      "events": [
+        { "id": "rotating-recon", "timestamp": "2026-10-20T12:23:00Z", "path": "/public/document-{index}", "clientIps": ["203.0.113.40", "203.0.113.41", "203.0.113.42", "203.0.113.43", "203.0.113.44", "203.0.113.45", "203.0.113.46", "203.0.113.47"], "statusCode": 200, "repeat": 8, "intervalMilliseconds": 100, "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "scanner-user-agent-spoofed",
+      "class": "spoofed_scanner_user_agent",
+      "description": "A hostile scenario uses a common browser user-agent and paths without configured markers.",
+      "events": [
+        { "id": "spoofed-scanner", "timestamp": "2026-10-20T12:24:00Z", "path": "/admin/reports", "clientIp": "198.51.100.28", "statusCode": 200, "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "scanner-user-agent-missing",
+      "class": "missing_user_agent_reconnaissance",
+      "description": "A hostile-looking but unconfigured path has no user-agent value.",
+      "events": [
+        { "id": "missing-agent", "timestamp": "2026-10-20T12:25:00Z", "path": "/backup/archive-old", "clientIp": "198.51.100.29", "statusCode": 200, "userAgent": "", "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "legitimate-crawler",
+      "class": "legitimate_crawler",
+      "description": "A small crawl of public pages remains below path-scan thresholds.",
+      "events": [
+        { "id": "crawler-page", "timestamp": "2026-10-20T12:26:00Z", "path": "/blog/post-{index}", "clientIp": "192.0.2.40", "statusCode": 200, "userAgent": "Googlebot/2.1", "repeat": 8, "intervalMilliseconds": 250, "expectedSuspicious": false }
+      ]
+    },
+    {
+      "id": "monitoring-health-checks",
+      "class": "monitoring_system",
+      "description": "Repeated successful health checks from a monitoring agent.",
+      "events": [
+        { "id": "monitor-health", "timestamp": "2026-10-20T12:27:00Z", "path": "/health", "clientIp": "192.0.2.41", "statusCode": 200, "userAgent": "ExampleMonitor/1.0", "repeat": 15, "intervalMilliseconds": 1000, "expectedSuspicious": false }
+      ]
+    },
+    {
+      "id": "legitimate-api-client",
+      "class": "api_client",
+      "description": "Frequent requests vary only query strings, which are excluded from unique-path counts.",
+      "events": [
+        { "id": "api-client", "timestamp": "2026-10-20T12:28:00Z", "path": "/v1/items?cursor={index}", "clientIp": "192.0.2.42", "statusCode": 200, "userAgent": "ExampleSdk/2.0", "repeat": 40, "intervalMilliseconds": 1000, "expectedSuspicious": false }
+      ]
+    },
+    {
+      "id": "application-error-burst",
+      "class": "application_generated_error_burst",
+      "description": "A deployment causes repeated 500 responses on a health endpoint; server-side failure is benign ground truth for client abuse.",
+      "events": [
+        { "id": "app-error", "timestamp": "2026-10-20T12:29:00Z", "path": "/health", "clientIp": "192.0.2.43", "statusCode": 500, "userAgent": "ExampleMonitor/1.0", "repeat": 12, "intervalMilliseconds": 1000, "expectedSuspicious": false }
+      ]
+    },
+    {
+      "id": "ipv4-repeated-not-found",
+      "class": "ipv4_repeated_404",
+      "description": "Three 404s from one IPv4 textual representation reach the repeated-not-found threshold.",
+      "events": [
+        { "id": "ipv4-404", "timestamp": "2026-10-20T12:30:00Z", "path": "/missing-{index}", "clientIp": "203.0.113.50", "statusCode": 404, "repeat": 3, "intervalMilliseconds": 1000, "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "ipv6-repeated-not-found",
+      "class": "ipv6_repeated_404",
+      "description": "Three 404s from one IPv6 textual representation reach the repeated-not-found threshold.",
+      "events": [
+        { "id": "ipv6-404", "timestamp": "2026-10-20T12:31:00Z", "path": "/missing-{index}", "clientIp": "2001:db8::50", "statusCode": 404, "repeat": 3, "intervalMilliseconds": 1000, "expectedSuspicious": true }
+      ]
+    },
+    {
+      "id": "equivalent-ip-representation-split",
+      "class": "equivalent_ip_representations",
+      "description": "Equivalent IPv4-mapped IPv6 and IPv4 strings split the store's exact-string 404 history.",
+      "events": [
+        { "id": "mapped-404", "timestamp": "2026-10-20T12:32:00Z", "path": "/missing-one", "clientIp": "::ffff:192.0.2.50", "statusCode": 404, "expectedSuspicious": false },
+        { "id": "mapped-404-two", "timestamp": "2026-10-20T12:32:01Z", "path": "/missing-two", "clientIp": "::ffff:192.0.2.50", "statusCode": 404, "expectedSuspicious": false },
+        { "id": "ipv4-404-third", "timestamp": "2026-10-20T12:32:02Z", "path": "/missing-three", "clientIp": "192.0.2.50", "statusCode": 404, "expectedSuspicious": true }
+      ]
+    }
+  ]
+}

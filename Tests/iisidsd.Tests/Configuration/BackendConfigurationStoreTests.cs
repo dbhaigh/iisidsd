@@ -77,6 +77,31 @@ public sealed class BackendConfigurationStoreTests : IAsyncLifetime
         Assert.Equal(original, await File.ReadAllTextAsync(Path.Combine(_contentRoot, "appsettings.json")));
     }
 
+      [Theory]
+      [InlineData("""{"Urls":"https://user:secret@127.0.0.1:5080"}""", "settings.Urls")]
+      [InlineData("""{"IisEtw":{"IngestionBufferSize":0}}""", "settings.IisEtw.IngestionBufferSize")]
+      [InlineData("""{"IisEtw":{"ProcessingBatchSize":0}}""", "settings.IisEtw.ProcessingBatchSize")]
+      [InlineData("""{"Storage":{"JournalMode":"OFF"}}""", "settings.Storage.JournalMode")]
+      [InlineData("""{"Storage":{"SynchronousMode":"OFF"}}""", "settings.Storage.SynchronousMode")]
+      [InlineData("""{"Storage":{"BusyTimeoutSeconds":0}}""", "settings.Storage.BusyTimeoutSeconds")]
+      [InlineData("""{"IisAdmin":{"AllowList":["192.0.2.1/99"]}}""", "settings.IisAdmin.AllowList")]
+      [InlineData("""{"IisAdmin":{"EnforcementMode":"immediate"}}""", "settings.IisAdmin.EnforcementMode")]
+      [InlineData("""{"Dashboard":{"AllowedHosts":["*"]}}""", "settings.Dashboard.AllowedHosts")]
+      [InlineData("""{"OpenTelemetry":{"OtlpEndpoint":"https://user:secret@collector.example/v1"}}""", "settings.OpenTelemetry.OtlpEndpoint")]
+      public async Task SaveSettingsAsync_RejectsUnsafeAndOutOfRangePatchesWithoutChangingTheFile(
+        string json,
+        string expectedError)
+      {
+        var original = await File.ReadAllTextAsync(Path.Combine(_contentRoot, "appsettings.json"));
+        using var request = JsonDocument.Parse(json);
+
+        var result = await _store.SaveSettingsAsync(request.RootElement, CancellationToken.None);
+
+        Assert.False(result.Saved);
+        Assert.Contains(expectedError, result.Errors.Keys);
+        Assert.Equal(original, await File.ReadAllTextAsync(Path.Combine(_contentRoot, "appsettings.json")));
+      }
+
     private const string TestSettings = """
         {
           "Urls": "http://127.0.0.1:5080",

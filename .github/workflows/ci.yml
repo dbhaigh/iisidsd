@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-quality-gates:
+    runs-on: windows-2022
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+        with:
+          fetch-depth: 0
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Ensure IIS administration reference is available
+        shell: pwsh
+        run: |
+          $assembly = Join-Path $env:WINDIR 'System32\inetsrv\Microsoft.Web.Administration.dll'
+          if (-not (Test-Path $assembly)) {
+            Enable-WindowsOptionalFeature -Online -FeatureName IIS-WebServerRole -All -NoRestart | Out-Null
+          }
+          if (-not (Test-Path $assembly)) {
+            throw "Required IIS assembly was not installed: $assembly"
+          }
+
+      - name: Restore and audit dependencies
+        run: dotnet restore iisidsd.slnx -p:NuGetAuditLevel=low -warnaserror
+
+      - name: Build with SDK analyzers
+        run: dotnet build iisidsd.slnx --no-restore --configuration Release -warnaserror
+
+      - name: Run tests
+        shell: pwsh
+        run: dotnet test Tests/iisidsd.Tests/iisidsd.Tests.csproj --no-build --no-restore --configuration Release --logger "trx;LogFileName=tests.trx" --results-directory "$env:RUNNER_TEMP\test-results"
+
+      - name: Generate detection evaluation report
+        shell: pwsh
+        run: dotnet run --project Tests/DetectionEvaluation/DetectionEvaluation.csproj --no-build --no-restore --configuration Release -- --fixture Tests/DetectionEvaluation/Fixtures/baseline-v1.json --compare docs/reports/detection-evaluation-original.json --output "$env:RUNNER_TEMP\detection-evaluation.json"
+
+      - name: Report vulnerable packages
+        run: dotnet list iisidsd.slnx package --vulnerable --include-transitive
+
+      - name: Publish standalone win-x64
+        shell: pwsh
+        run: |
+          $publishDir = Join-Path $env:RUNNER_TEMP 'iisidsd-publish'
+          dotnet restore iisidsd.csproj -p:RuntimeIdentifier=win-x64 -p:NuGetAuditLevel=low -warnaserror
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish iisidsd.csproj --no-restore --configuration Release -p:PublishProfile=StandaloneWinX64 "-p:PublishDir=$publishDir\" -warnaserror
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path (Join-Path $publishDir 'iisidsd.exe'))) { throw 'Standalone executable was not published.' }
+          if (-not (Test-Path (Join-Path $publishDir 'appsettings.json'))) { throw 'Runtime settings were not published.' }
+          if (-not (Test-Path (Join-Path $publishDir 'wwwroot'))) { throw 'Dashboard assets were not published.' }
+          if (Test-Path (Join-Path $publishDir 'appsettings.Development.json')) { throw 'Development settings must not be published.' }
+          if (Test-Path (Join-Path $publishDir 'data\iisidsd.sqlite3')) { throw 'A local database must not be published.' }
+
+      - name: Download and verify Gitleaks
+        shell: pwsh
+        run: |
+          $version = '8.30.1'
+          $archive = Join-Path $env:RUNNER_TEMP "gitleaks_$version`_windows_x64.zip"
+          $url = "https://github.com/gitleaks/gitleaks/releases/download/v$version/gitleaks_$($version)_windows_x64.zip"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $expected = 'd29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e'
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Gitleaks archive checksum mismatch: $actual" }
+          $toolDir = Join-Path $env:RUNNER_TEMP 'gitleaks'
+          Expand-Archive -Path $archive -DestinationPath $toolDir -Force
+          "GITLEAKS_EXE=$(Join-Path $toolDir 'gitleaks.exe')" >> $env:GITHUB_ENV
+
+      - name: Scan repository history for secrets
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP 'gitleaks.sarif'
+          & $env:GITLEAKS_EXE git --redact --report-format sarif --report-path $report .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload test, secret-scan, and publish artifacts
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: ci-diagnostics
+          path: |
+            ${{ runner.temp }}\test-results\
+            ${{ runner.temp }}\detection-evaluation.json
+            ${{ runner.temp }}\gitleaks.sarif
+            ${{ runner.temp }}\iisidsd-publish\
+          if-no-files-found: ignore
+          retention-days: 14
