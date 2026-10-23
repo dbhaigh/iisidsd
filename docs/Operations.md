@@ -238,7 +238,7 @@ Notes:
 - Unexpected service failures trigger restart attempts after 5, 15, and 60 seconds.
 - Install/service management also registers a Startup scheduled task (`iisidsd Tray Companion`) to launch tray companion mode at user logon.
 - When the service is already running, interactive launches switch directly to tray companion mode.
-- During install/start from a full interactive host, the dashboard remains available while handoff completes, then the original host closes gracefully after readiness checks.
+- During install/start from a full interactive host, the browser dashboard stays open while the original host shuts down gracefully. The tray companion starts the service after that host exits and waits for the service health endpoint and dashboard assets to become ready; the open dashboard reconnects its live event stream automatically.
 - Stop and restart wait for the Windows service to stop gracefully; restart waits for the dashboard health endpoint before reporting success.
 - The context menu reports Windows service state and dashboard health separately. Lifecycle actions are enabled only for stable service states.
 - A fresh install runs as the virtual account `NT SERVICE\iisidsd`, not LocalSystem or an administrator. Installation grants it read/execute access to the application directory, modify access to `appsettings.json`, and modify access to `data/`. It does not grant IIS configuration rights. Existing service identities are preserved on upgrade; their permissions are not silently changed.

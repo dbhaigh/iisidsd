@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.2.8 - 2026-10-22
+
+### Fixed
+- Service handoff now waits for the interactive host to finish graceful shutdown before starting the Windows service, without cancelling after an arbitrary timeout.
+- The browser dashboard remains open through the handoff and its live event stream reconnects to the service when it becomes available.
+
+### Documentation
+- Clarified service startup, dashboard availability, and readiness behavior during install/start handoff.
+
 ## 0.2.7 - 2026-10-22
 
 ### Changed

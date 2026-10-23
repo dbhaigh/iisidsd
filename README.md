@@ -17,6 +17,11 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls
 
+## Release 0.2.8 highlights
+
+- Service install/start from an interactive host preserves the open dashboard during graceful handoff; the service starts after the old host exits and the dashboard reconnects to its live event stream.
+- The handoff no longer abandons service startup when graceful shutdown takes longer than an arbitrary timeout.
+
 ## Release 0.2.4 highlights
 
 - Detection is modular: the built-in heuristic remains the default contributor, while new modules are observe-only until explicitly configured to contribute.

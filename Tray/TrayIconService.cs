@@ -48,11 +48,17 @@ public sealed class TrayIconService(
         {
             try
             {
+                var serviceHandoffRequested = Environment.GetCommandLineArgs()
+                    .Any(arg => arg.StartsWith("--service-handoff-pid=", StringComparison.OrdinalIgnoreCase));
                 using var trayMutex = new Mutex(initiallyOwned: false, "Local\\iisidsd-tray-companion");
                 bool ownsMutex;
                 try
                 {
                     ownsMutex = trayMutex.WaitOne(0);
+                    if (!ownsMutex && serviceHandoffRequested)
+                    {
+                        ownsMutex = trayMutex.WaitOne();
+                    }
                 }
                 catch (AbandonedMutexException)
                 {
@@ -667,7 +673,7 @@ public sealed class TrayIconService(
 
         private async Task StartServiceAfterHostExitAsync(int parentProcessId)
         {
-            if (!await WaitForHostProcessExitAsync(parentProcessId, TimeSpan.FromSeconds(90)))
+            if (!await WaitForHostProcessExitAsync(parentProcessId))
             {
                 _logger.LogError(
                     "The interactive dashboard process {ProcessId} did not exit; the service handoff was cancelled.",
@@ -687,22 +693,17 @@ public sealed class TrayIconService(
             }
         }
 
-        private async Task<bool> WaitForHostProcessExitAsync(int processId, TimeSpan timeout)
+        private async Task<bool> WaitForHostProcessExitAsync(int processId)
         {
-            using var timeoutSource = new CancellationTokenSource(timeout);
             try
             {
                 using var hostProcess = Process.GetProcessById(processId);
-                await hostProcess.WaitForExitAsync(timeoutSource.Token);
+                await hostProcess.WaitForExitAsync();
                 return true;
             }
             catch (ArgumentException)
             {
                 return true;
-            }
-            catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
-            {
-                return false;
             }
             catch (InvalidOperationException exception)
             {
