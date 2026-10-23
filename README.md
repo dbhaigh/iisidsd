@@ -17,6 +17,11 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls that request elevation when needed
 
+## Release 0.2.12 highlights
+
+- Localhost dashboard health and metrics requests explicitly use the signed-in browser's Windows credentials.
+- Access notices wait for the administrator-status request and reflect the verified Windows account.
+
 ## Release 0.2.11 highlights
 
 - Start, Stop, and Restart are enabled for installed services in the tray menu; non-elevated companions prompt for Windows elevation only when the user selects an action.

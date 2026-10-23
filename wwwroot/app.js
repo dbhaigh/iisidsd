@@ -7,6 +7,7 @@ const state = {
   sites: [],
   deniedIps: [],
   iisStatusInfo: null,
+  iisStatusLoaded: false,
   iisStatusError: '',
   iisStatusErrorStatus: 0,
   selectedDomain: '*',
@@ -211,7 +212,7 @@ function parsePrometheusMetric(metricsText, metricName) {
 async function refreshDashboardHealth() {
   if (healthRefreshRunning) return;
   healthRefreshRunning = true;
-  const healthRequest = fetch('/health').then(async response => {
+  const healthRequest = fetch('/health', { credentials: 'same-origin' }).then(async response => {
     const result = await response.json();
     state.serviceReadiness = result.readiness ?? 'unknown';
     state.etwState = result.checks?.etw?.state ?? 'unknown';
@@ -220,7 +221,7 @@ async function refreshDashboardHealth() {
     state.serviceReadiness = 'unknown';
     state.databaseHealth = 'degraded';
   });
-  const metricsRequest = fetch('/metrics').then(async response => {
+  const metricsRequest = fetch('/metrics', { credentials: 'same-origin' }).then(async response => {
     if (!response.ok) {
       const error = new Error(`HTTP ${response.status}`);
       error.status = response.status;
@@ -1190,6 +1191,11 @@ function appendAccessNotice(tone, title, message) {
 }
 
 function renderAccessStatus() {
+  if (!state.iisStatusLoaded) {
+    accessNotices.replaceChildren();
+    return;
+  }
+
   const host = location.hostname.toLowerCase();
   const localHost = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(host);
   const signature = [
@@ -1201,13 +1207,7 @@ function renderAccessStatus() {
   if (signature === state.accessStatusSignature) return;
   state.accessStatusSignature = signature;
   accessNotices.replaceChildren();
-  if (localHost) {
-    appendAccessNotice(
-      'warning',
-      'Remote access',
-      'Local dashboard viewing is available, but management APIs still require an authenticated Windows Administrator. Loopback and service elevation do not grant administrator access.'
-    );
-  } else {
+  if (!localHost) {
     appendAccessNotice(
       'warning',
       'Remote access',
@@ -1219,7 +1219,7 @@ function renderAccessStatus() {
     appendAccessNotice(
       'good',
       'Administrator access verified',
-      'Administrator-only IIS settings are available for this session.'
+      'Your logged-on Windows account is authenticated and has administrator access for this session.'
     );
     if (state.iisStatusInfo.enforcementMode === 'Simulate') {
       appendAccessNotice(
@@ -1244,19 +1244,19 @@ function renderAccessStatus() {
     appendAccessNotice(
       'danger',
       'Administrator access unavailable',
-      'This account is not authorized for administrator-only dashboard actions, or the server access policy rejected the request.'
+      'This Windows account is not authorized for administrator-only dashboard actions, or the server access policy rejected the request.'
     );
   } else if (state.iisStatusErrorStatus === 401) {
     appendAccessNotice(
       'warning',
       'Administrator sign-in required',
-      'Windows Authentication is only needed to verify administrator-only IIS features; viewing the dashboard does not require sign-in.'
+      'The browser should use your logged-on Windows credentials for administrator-only actions. If it does not, allow integrated authentication for this localhost origin.'
     );
   } else {
     appendAccessNotice(
       'warning',
       'Administrator status unknown',
-      'IIS safety settings and administrator-only actions are unavailable until status can be read.'
+      'Administrator-only actions remain unavailable until status can be read. Same-origin API requests send the browser session credentials.'
     );
   }
 }
@@ -1540,11 +1540,13 @@ async function refreshIisStatus() {
     const statusInfo = await fetchJson('/api/iis/status');
     if (requestId !== state.iisStatusRequestId) return;
     state.iisStatusInfo = statusInfo;
+    state.iisStatusLoaded = true;
     state.iisStatusError = '';
     state.iisStatusErrorStatus = 0;
   } catch (error) {
     if (requestId !== state.iisStatusRequestId) return;
     state.iisStatusInfo = null;
+    state.iisStatusLoaded = true;
     state.iisStatusErrorStatus = error?.status || 0;
     state.iisStatusError = state.iisStatusErrorStatus === 401
       ? 'Windows Authentication is required to view administrator-only IIS settings.'

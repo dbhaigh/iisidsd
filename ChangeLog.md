@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.2.12 - 2026-10-22
+
+### Fixed
+- Dashboard health and metrics requests explicitly send same-origin Windows credentials, keeping localhost status checks consistent with protected management APIs.
+- Access messaging waits for the administrator-status request and reports the authenticated Windows account instead of showing a premature warning.
+
+### Documentation
+- Clarified localhost browser authentication and administrator authorization behavior.
+
 ## 0.2.11 - 2026-10-22
 
 ### Changed
