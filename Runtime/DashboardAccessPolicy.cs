@@ -23,7 +23,7 @@ public static class DashboardAccessPolicy
             return DashboardAccessDecision.Forbidden;
         }
 
-        if (remoteAccessEnabled && !isHttps)
+        if (remoteAccessEnabled && !isHttps && !isLocalRequest)
         {
             return DashboardAccessDecision.Forbidden;
         }

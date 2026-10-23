@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.2.13 - 2026-10-22
+
+### Fixed
+- Local dashboard access over HTTP no longer returns 403 when remote access is enabled; loopback requests still require Windows Authentication, and non-loopback requests still require HTTPS.
+
+### Documentation
+- Clarified the different transport requirements for loopback and remote clients in remote-access mode.
+
 ## 0.2.12 - 2026-10-22
 
 ### Fixed

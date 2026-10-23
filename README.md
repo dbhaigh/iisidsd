@@ -17,6 +17,10 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls that request elevation when needed
 
+## Release 0.2.13 highlights
+
+- Remote-access mode allows authenticated loopback dashboard requests over HTTP while continuing to require HTTPS for remote clients.
+
 ## Release 0.2.12 highlights
 
 - Localhost dashboard health and metrics requests explicitly use the signed-in browser's Windows credentials.
@@ -213,7 +217,7 @@ Existing installations preserve their configured URLs during upgrade. To use the
 
 `Dashboard:MaximumEventStreamSubscribers` defaults to 64 and is limited to 1-256. `Dashboard:EventStreamHeartbeatSeconds` defaults to 15 seconds and `Dashboard:EventStreamWriteTimeoutSeconds` to 30 seconds; both are limited to 1-120 seconds.
 
-To enable remote access, set `Dashboard:RemoteAccessEnabled` to `true`, bind `Urls` to an HTTPS address, configure a Kestrel server certificate, and add every DNS name or exact IP used in the request Host header to `Dashboard:AllowedHosts`. Remote mode requires HTTPS and Windows Authentication on all requests, including loopback requests, so a reverse proxy cannot gain local exemptions. Allowed hosts default to `localhost`, `127.0.0.1`, and `::1`; wildcards and host:port entries are rejected. For a proxy, separately configure `TrustedProxies` with its exact peer IP and ensure it overwrites forwarded headers. Do not put certificate passwords in source-controlled configuration.
+To enable remote access, set `Dashboard:RemoteAccessEnabled` to `true`, bind remote clients to an HTTPS address, configure a Kestrel server certificate, and add every DNS name or exact IP used in the request Host header to `Dashboard:AllowedHosts`. Remote clients require HTTPS and Windows Authentication. Loopback clients may use HTTP, but Windows Authentication is still required when remote mode is enabled. Allowed hosts default to `localhost`, `127.0.0.1`, and `::1`; wildcards and host:port entries are rejected. For a proxy, separately configure `TrustedProxies` with its exact peer IP and ensure it overwrites forwarded headers. Do not put certificate passwords in source-controlled configuration.
 
 Unsafe browser requests require a same-origin `Origin` (or same-origin `Referer` when Origin is unavailable); cross-origin and missing-origin writes are rejected. Host validation mitigates DNS rebinding and hostile Host headers. Do not expose the listener or trusted proxy to unintended networks. IIS deny-list changes additionally require `IisAdmin:EnableDenyListChanges=true`, which is disabled by default. See [docs/SECURITY.md](docs/SECURITY.md) for the endpoint matrix, threat model, migration steps, and residual risks.
 

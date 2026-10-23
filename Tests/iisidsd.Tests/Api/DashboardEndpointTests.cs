@@ -475,15 +475,30 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RemoteAccess_RequiresHttpsAndWindowsAuthentication()
+    public async Task RemoteAccess_RequiresHttpsForRemoteClientsAndWindowsAuthentication()
     {
         using var httpResponse = await SendAsync(HttpMethod.Get, "/api/findings", body: null, scheme: "http");
+        using var anonymousLocalHttpResponse = await SendAsync(
+            HttpMethod.Get,
+            "/api/findings",
+            body: null,
+            remoteIp: "127.0.0.1",
+            scheme: "http");
+        using var authenticatedLocalHttpResponse = await SendAsync(
+            HttpMethod.Get,
+            "/api/findings",
+            body: null,
+            role: "user",
+            remoteIp: "127.0.0.1",
+            scheme: "http");
         using var anonymousHttpsResponse = await SendAsync(HttpMethod.Get, "/api/findings", body: null);
         using var authenticatedHttpsResponse = await SendAsync(HttpMethod.Get, "/api/findings", body: null, role: "user");
         using var customHostResponse = await SendAsync(HttpMethod.Get, "/api/findings", body: null, role: "user",
             host: "dashboard.example", origin: "https://dashboard.example");
 
         Assert.Equal(HttpStatusCode.Forbidden, httpResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymousLocalHttpResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, authenticatedLocalHttpResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, anonymousHttpsResponse.StatusCode);
         Assert.Equal(HttpStatusCode.OK, authenticatedHttpsResponse.StatusCode);
         Assert.Contains("max-age=31536000", authenticatedHttpsResponse.Headers.GetValues("Strict-Transport-Security").Single());

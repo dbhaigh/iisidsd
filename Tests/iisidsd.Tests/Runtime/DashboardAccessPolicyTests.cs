@@ -11,7 +11,7 @@ public sealed class DashboardAccessPolicyTests
     [InlineData(false, false, false, DashboardAccessDecision.Forbidden)]
     [InlineData(true, false, false, DashboardAccessDecision.Forbidden)]
     [InlineData(true, false, true, DashboardAccessDecision.AuthenticationRequired)]
-    [InlineData(true, true, false, DashboardAccessDecision.Forbidden)]
+    [InlineData(true, true, false, DashboardAccessDecision.AuthenticationRequired)]
     [InlineData(true, true, true, DashboardAccessDecision.AuthenticationRequired)]
     public void Evaluate_ReturnsExpectedAccessDecision(
         bool remoteAccessEnabled,
