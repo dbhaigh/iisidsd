@@ -9,12 +9,14 @@ namespace iisidsd.Tests.Iis;
 
 public sealed class IisAutoDenyServiceTests
 {
-    [Fact]
-    public void Apply_HighSeverityWithoutRepeatedEvidence_DoesNothing()
+    [Theory]
+    [InlineData("High")]
+    [InlineData("Critical")]
+    public void Apply_HighOrCriticalSeverityWithoutRepeatedEvidence_AddsToDenyListAndIncrementsBanCount(string riskSeverity)
     {
         var denyListService = new FakeIisDenyListService(["example.test-site"]);
         var banCountService = new FakeBanCountService();
-        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true });
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
         var service = new IisAutoDenyService(
             denyListService,
             banCountService,
@@ -34,13 +36,13 @@ public sealed class IisAutoDenyServiceTests
             IsSuspicious: true,
             DetectionReason: "suspicious request URI",
             RiskScore: 5,
-            RiskSeverity: "High",
+            RiskSeverity: riskSeverity,
             RiskIndicators: ["suspicious request URI pattern"]);
 
         service.Apply(securityEvent);
 
-        Assert.Empty(denyListService.Requests);
-        Assert.Empty(banCountService.IncrementRequests);
+        Assert.Single(denyListService.Requests);
+        Assert.Single(banCountService.IncrementRequests);
     }
 
     [Fact]
@@ -149,7 +151,7 @@ public sealed class IisAutoDenyServiceTests
     }
 
     [Fact]
-    public void Apply_WhenDenyListChangesDisabled_DoesNothing()
+    public void Apply_WhenDenyListChangesDisabled_ObservesHighRiskWithoutBanning()
     {
         var denyListService = new FakeIisDenyListService(["example.test-site"]);
         var banCountService = new FakeBanCountService();
@@ -178,7 +180,7 @@ public sealed class IisAutoDenyServiceTests
 
         service.Apply(securityEvent);
 
-        Assert.Empty(denyListService.Requests);
+        Assert.Single(denyListService.Requests);
         Assert.Empty(banCountService.IncrementRequests);
     }
 
@@ -205,7 +207,7 @@ public sealed class IisAutoDenyServiceTests
             "unit-test",
             new Dictionary<string, string>(),
             IsSuspicious: true,
-            RiskSeverity: "High",
+            RiskSeverity: "Medium",
             RiskIndicators: ["multiple 404 responses from the same client IP"]);
 
         service.Apply(securityEvent);

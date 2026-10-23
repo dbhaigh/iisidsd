@@ -1,5 +1,16 @@
 # Change Log
 
+## 0.2.7 - 2026-10-22
+
+### Changed
+- Suspicious High and Critical risk events now qualify for automatic deny based on severity, even with a single indicator.
+
+### Security
+- Allow-list, Observe/Simulate, dry-run, and the IIS write master switch continue to prevent live deny-list changes.
+
+### Validation
+- Added coverage for High/Critical single-indicator events and disabled enforcement observation.
+
 ## 0.2.6 - 2026-10-22
 
 ### Fixed

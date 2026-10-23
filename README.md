@@ -165,7 +165,7 @@ Controls IIS deny-list write safety.
 - `AllowList` - exact IPv4/IPv6 addresses or CIDR ranges that are never added to an IIS deny list
 - `TemporaryBanMinutes` - positive values set an expiry; `0` means permanent
 - `DryRun` - defaults to `true`; records intended actions without changing IIS
-- `RequireMultipleIndicators` - when enabled, automatic denial requires multiple distinct indicators
+- `RequireMultipleIndicators` - when enabled, below-High automatic denial requires multiple distinct indicators; High and Critical events qualify on severity alone
 
 `EnableDenyListChanges` is the master switch for IIS writes. When it is false, the effective mode is `Observe`. `Simulate` records intended actions without invoking IIS mutation commands. `DryRun=true` also prevents an explicit `Enforce` mode from writing. Keep the defaults until an administrator has reviewed the preview and audit behavior.
 

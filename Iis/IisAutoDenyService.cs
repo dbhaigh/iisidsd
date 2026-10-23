@@ -23,11 +23,12 @@ public sealed class IisAutoDenyService(
         var indicators = securityEvent.RiskIndicators ?? [];
         var distinctIndicators = indicators.Distinct(StringComparer.Ordinal).ToArray();
         var repeatedNotFound = distinctIndicators.Contains(RepeatedNotFoundIndicator, StringComparer.Ordinal);
-        var critical = string.Equals(securityEvent.RiskSeverity, "Critical", StringComparison.OrdinalIgnoreCase);
+        var highOrCritical = string.Equals(securityEvent.RiskSeverity, "High", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(securityEvent.RiskSeverity, "Critical", StringComparison.OrdinalIgnoreCase);
         var requireMultipleIndicators = adminOptions.Value.RequireMultipleIndicators;
         if (!securityEvent.IsSuspicious ||
-            (!repeatedNotFound && !critical) ||
-            (requireMultipleIndicators && distinctIndicators.Length < 2))
+            (!repeatedNotFound && !highOrCritical) ||
+            (requireMultipleIndicators && !highOrCritical && distinctIndicators.Length < 2))
         {
             return;
         }
