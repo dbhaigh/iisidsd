@@ -209,7 +209,7 @@ If `appcmd.exe` is unavailable, site discovery and deny-list views will remain e
 
 ## IIS deny-list workflow
 
-The default is `EnableDenyListChanges=false` and `DryRun=true`. The master switch keeps the service in `Observe` mode and prevents IIS writes. When enabled, `IisAdmin:EnforcementMode` may be `Observe`, `Simulate`, or `Enforce`. If omitted, the legacy settings map `DryRun=true` to `Simulate` and `DryRun=false` to `Enforce`; `DryRun=true` also prevents an explicit `Enforce` setting from writing.
+New installations default to `EnableDenyListChanges=true`, `EnforcementMode=Enforce`, and `DryRun=false`. Suspicious High and Critical events qualify for automatic deny on severity alone, while lower-severity repeated-404 activity remains subject to `RequireMultipleIndicators`. Allow-listed IPs are never denied. `TemporaryBanMinutes=0` means automatic bans are permanent. Configure the allow-list and verify IIS site mappings before event ingestion; IIS writes also require the process to have IIS configuration permissions. To pause writes, set `EnableDenyListChanges=false`, select `Observe` or `Simulate`, or set `DryRun=true`.
 
 The dashboard preview reports the selected site/IP, allow-list status, existing rule ownership, expiry, and application pools or other sites that share those pools. Review it before confirming a change. The service does not modify app-pool recycling settings. Changes apply only to the selected IIS site.
 
@@ -274,7 +274,7 @@ The tray's stop action waits up to 60 seconds for SCM to report `Stopped`. Accep
 
 The dashboard binds to `http://localhost:5080` by default and rejects non-loopback clients. Anonymous local users can view the dashboard and read event/finding data, but all management APIs require an authenticated Windows Administrator, regardless of host elevation. The tray launches `localhost`; same-origin dashboard requests, including health and metrics checks, use Windows Negotiate credentials so the signed-in account can authenticate without a separate application login when browser integrated authentication is enabled. The access notice waits for the administrator-status request before reporting whether the account is authorized. For remote access, set `Dashboard:RemoteAccessEnabled=true`, bind remote clients to HTTPS, configure a Kestrel certificate, add the requested host to `Dashboard:AllowedHosts`, and allow the port only from intended clients through Windows Firewall. Remote clients require HTTPS and Windows Authentication; loopback clients may use HTTP but still require Windows Authentication in remote mode. Management APIs additionally require Windows Administrator membership.
 
-Ban-count and IIS deny-list write APIs require an authenticated Windows Administrator, including for local requests. IIS deny-list changes additionally require `IisAdmin:EnableDenyListChanges=true`; this setting is disabled by default. Do not expose the listener through a reverse proxy unless remote access is enabled and the proxy preserves the required authentication and TLS protections.
+Ban-count and IIS deny-list write APIs require an authenticated Windows Administrator, including for local requests. IIS deny-list changes additionally require `IisAdmin:EnableDenyListChanges=true` and process-level IIS configuration permissions; the setting is enabled by default for new installations. Do not expose the listener through a reverse proxy unless remote access is enabled and the proxy preserves the required authentication and TLS protections.
 
 For a trusted reverse proxy, configure `TrustedProxies:Enabled=true` and list each exact proxy IP under `TrustedProxies:TrustedProxyIps`. Forwarded headers are otherwise ignored. Only `X-Forwarded-For` and `X-Forwarded-Proto` are processed, up to `ForwardLimit`; forwarded host is not used. The proxy must remove untrusted client-supplied forwarded headers before adding its own and must be restricted to intended clients. Set `Dashboard:AllowedHosts` to the public request host. See [SECURITY.md](SECURITY.md) for the full endpoint matrix and threat model.
 
@@ -309,9 +309,9 @@ History resets on restart by design. This avoids persisting additional per-clien
 
 ### Apply a deny-list change
 
-1. Leave `EnableDenyListChanges=false` while reviewing the target and validating the allow-list. Use `Observe` or `Simulate` to confirm behavior without IIS writes.
+1. Before enabling event ingestion on a new installation, review the allow-list and target IIS sites. To review without writes, set `EnableDenyListChanges=false` or use `Observe`, `Simulate`, or `DryRun=true`.
 2. Select the site and IP, inspect the preview, and resolve any allow-list, unmanaged-rule, or shared-pool warning.
-3. For an approved live change, set `EnableDenyListChanges=true`, `EnforcementMode=Enforce`, and `DryRun=false`. Restart if required for configuration changes to take effect.
+3. For live enforcement, set `EnableDenyListChanges=true`, `EnforcementMode=Enforce`, and `DryRun=false`. These are now the new-install defaults. Restart if required for configuration changes to take effect.
 4. Apply the site-specific change. Removal is available only for service-owned deny rules; administrator-owned or unmanaged rules are left untouched.
 5. Verify the IIS view and the audit history. Keep the SQLite database available so pending operations can be recovered after a restart.
 

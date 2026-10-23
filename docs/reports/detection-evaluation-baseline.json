@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "detectorVersion": "0.2.13.0",
+  "detectorVersion": "0.2.14.0",
   "detectorRevision": "heuristic-evidence-v2",
   "datasetId": "iisidsd-synthetic-baseline-v1",
   "datasetDescription": "Deterministic synthetic IIS-like request sequences for regression and comparative evaluation. All domains use .invalid and all addresses are documentation-only ranges.",

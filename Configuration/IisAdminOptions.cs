@@ -6,14 +6,14 @@ public sealed class IisAdminOptions
 {
     public const string SectionName = "IisAdmin";
 
-    public bool EnableDenyListChanges { get; set; } = false;
+    public bool EnableDenyListChanges { get; set; } = true;
     [MaxLength(16)]
-    public string? EnforcementMode { get; set; }
+    public string? EnforcementMode { get; set; } = "Enforce";
     [Required]
     public string[] AllowList { get; set; } = [];
     [Range(0, int.MaxValue)]
     public int TemporaryBanMinutes { get; set; }
-    public bool DryRun { get; set; } = true;
+    public bool DryRun { get; set; }
     public bool RequireMultipleIndicators { get; set; } = true;
 
     public DenyListEnforcementPolicy GetEnforcementPolicy()

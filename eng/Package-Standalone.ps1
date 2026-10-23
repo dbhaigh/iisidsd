@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'StandaloneRelease.psm1') -Force
 
 $publishPath = (Resolve-Path -LiteralPath $PublishDirectory).Path
-$payload = @(Get-IisidsdStandalonePayload -Path $publishPath -IncludeSettings -RequireSafeDefaults -AllowBuildOutputExtras)
+$payload = @(Get-IisidsdStandalonePayload -Path $publishPath -IncludeSettings -RequireReleaseDefaults -AllowBuildOutputExtras)
 [xml]$project = Get-Content -LiteralPath $ProjectFile -Raw
 $version = [string]($project.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1 -ExpandProperty Version)
 if ($version -notmatch '^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$') {
@@ -66,7 +66,7 @@ $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerI
     ExpandedDirectory = $bundlePath
 }
 
-$null = Get-IisidsdStandalonePayload -Path $bundlePath -IncludeSettings -RequireSafeDefaults
+$null = Get-IisidsdStandalonePayload -Path $bundlePath -IncludeSettings -RequireReleaseDefaults
 
 $zipCheck = [IO.Compression.ZipFile]::OpenRead($archivePath)
 try {

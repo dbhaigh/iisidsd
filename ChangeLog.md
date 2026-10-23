@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.2.14 - 2026-10-22
+
+### Changed
+- Fresh installs default to Enforce-mode automatic IIS deny actions; suspicious High and Critical events qualify without multiple indicators.
+- The standalone release validator now checks the requested live-enforcement defaults while preserving loopback-only dashboard access.
+
+### Documentation
+- Documented live auto-deny defaults, allow-list behavior, permanent-ban default duration, and how to disable enforcement.
+
 ## 0.2.13 - 2026-10-22
 
 ### Fixed

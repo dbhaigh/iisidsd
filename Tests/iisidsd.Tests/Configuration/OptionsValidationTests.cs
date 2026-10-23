@@ -65,6 +65,19 @@ public sealed class OptionsValidationTests
         Assert.Equal(expectedCanMutate, policy.CanMutate);
     }
 
+    [Fact]
+    public void DefaultIisAdminOptions_EnableEnforceMode()
+    {
+        var options = new IisAdminOptions();
+        var policy = options.GetEnforcementPolicy();
+
+        Assert.True(options.EnableDenyListChanges);
+        Assert.False(options.DryRun);
+        Assert.Equal("Enforce", options.EnforcementMode);
+        Assert.Equal(DenyListEnforcementMode.Enforce, policy.Mode);
+        Assert.True(policy.CanMutate);
+    }
+
     [Theory]
     [MemberData(nameof(InvalidSettings))]
     public async Task InvalidOptions_FailDuringHostStartup(string key, string value)

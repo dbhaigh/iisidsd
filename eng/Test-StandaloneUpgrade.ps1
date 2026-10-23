@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'StandaloneRelease.psm1') -Force
 $packagePath = (Resolve-Path -LiteralPath $PackageDirectory).Path
-$null = Get-IisidsdStandalonePayload -Path $packagePath -IncludeSettings -RequireSafeDefaults
+$null = Get-IisidsdStandalonePayload -Path $packagePath -IncludeSettings -RequireReleaseDefaults
 $previousPath = if ([string]::IsNullOrWhiteSpace($PreviousPackageDirectory)) {
     $packagePath
 }

@@ -13,7 +13,7 @@ function Get-IisidsdStandalonePayload {
     param(
         [Parameter(Mandatory)][string]$Path,
         [switch]$IncludeSettings,
-        [switch]$RequireSafeDefaults,
+        [switch]$RequireReleaseDefaults,
         [switch]$AllowBuildOutputExtras
     )
 
@@ -48,15 +48,16 @@ function Get-IisidsdStandalonePayload {
         throw "Standalone payload directory allowlist mismatch. Actual: $($directories -join ', ')."
     }
 
-    if ($RequireSafeDefaults) {
-        if (-not $IncludeSettings) { throw 'Safe-default validation requires appsettings.json.' }
+    if ($RequireReleaseDefaults) {
+        if (-not $IncludeSettings) { throw 'Release-default validation requires appsettings.json.' }
         $settings = Get-Content -LiteralPath (Join-Path $root 'appsettings.json') -Raw | ConvertFrom-Json
         $allowedLoopbackUrls = @('http://127.0.0.1:5080', 'http://localhost:5080')
         if ($settings.Urls -cnotin $allowedLoopbackUrls -or
             $settings.Dashboard.RemoteAccessEnabled -ne $false -or
-            $settings.IisAdmin.EnableDenyListChanges -ne $false -or
-            $settings.IisAdmin.DryRun -ne $true) {
-            throw 'Release settings must retain loopback-only access, disabled IIS writes, and dry-run defaults.'
+            $settings.IisAdmin.EnableDenyListChanges -ne $true -or
+            $settings.IisAdmin.DryRun -ne $false -or
+            $settings.IisAdmin.EnforcementMode -cne 'Enforce') {
+            throw 'Release settings must retain loopback-only access and enable Enforce-mode automatic IIS deny actions.'
         }
 
         Assert-NoStandaloneSecrets -Value $settings

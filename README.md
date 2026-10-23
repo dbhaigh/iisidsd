@@ -17,6 +17,11 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls that request elevation when needed
 
+## Release 0.2.14 highlights
+
+- Fresh installs enable Enforce-mode automatic IIS deny actions; suspicious High and Critical events qualify on severity alone, subject to the IP allow-list and matching IIS site.
+- The default ban duration is permanent; configure `TemporaryBanMinutes` to enable expiry.
+
 ## Release 0.2.13 highlights
 
 - Remote-access mode allows authenticated loopback dashboard requests over HTTP while continuing to require HTTPS for remote clients.
@@ -53,7 +58,7 @@
 
 - IIS deny-list changes no longer alter application-pool recycling settings; previews identify shared-pool impact.
 - Deny-list enforcement supports Observe, Simulate, and Enforce modes, with SQLite ownership journaling, audit history, temporary expiry, and pending-operation recovery.
-- Existing unmanaged deny rules and administrator allow rules are preserved; enforcement remains disabled by default.
+- Existing unmanaged deny rules and administrator allow rules are preserved; fresh installs enable High/Critical automatic enforcement, with allow-listed addresses excluded.
 
 ## Release 0.2.2 highlights
 
@@ -184,14 +189,14 @@ The store subscribes before replaying retained rows, so events arriving during r
 
 Controls IIS deny-list write safety.
 
-- `EnableDenyListChanges` - defaults to `false`
-- `EnforcementMode` - `Observe`, `Simulate`, or `Enforce`; when omitted, legacy `DryRun` maps to `Simulate` or `Enforce`
+- `EnableDenyListChanges` - defaults to `true`
+- `EnforcementMode` - defaults to `Enforce`; can be set to `Observe` or `Simulate`
 - `AllowList` - exact IPv4/IPv6 addresses or CIDR ranges that are never added to an IIS deny list
 - `TemporaryBanMinutes` - positive values set an expiry; `0` means permanent
-- `DryRun` - defaults to `true`; records intended actions without changing IIS
+- `DryRun` - defaults to `false`; set to `true` to record intended actions without changing IIS
 - `RequireMultipleIndicators` - when enabled, below-High automatic denial requires multiple distinct indicators; High and Critical events qualify on severity alone
 
-`EnableDenyListChanges` is the master switch for IIS writes. When it is false, the effective mode is `Observe`. `Simulate` records intended actions without invoking IIS mutation commands. `DryRun=true` also prevents an explicit `Enforce` mode from writing. Keep the defaults until an administrator has reviewed the preview and audit behavior.
+`EnableDenyListChanges` is the master switch for IIS writes. The shipped defaults enable live enforcement, so configure the allow-list and review IIS site mappings before starting event ingestion. High and Critical suspicious events qualify regardless of `RequireMultipleIndicators`; allow-listed addresses are never denied. `TemporaryBanMinutes=0` means bans are permanent. Set `EnableDenyListChanges=false`, choose `Observe` or `Simulate`, or set `DryRun=true` to prevent IIS writes.
 
 The SQLite journal tracks service ownership and pending IIS transitions. Existing unmanaged deny rules are not adopted or removed, and administrator allow rules are preserved. Temporary expiry applies only to service-owned entries. Pending transitions are reconciled while enforcement is active; ambiguous cases are preserved for administrator review. Do not delete the configured SQLite database as a way to reset IIS ownership. See [docs/Operations.md](docs/Operations.md#iis-deny-list-workflow) for the change and rollback runbook.
 
@@ -219,7 +224,7 @@ Existing installations preserve their configured URLs during upgrade. To use the
 
 To enable remote access, set `Dashboard:RemoteAccessEnabled` to `true`, bind remote clients to an HTTPS address, configure a Kestrel server certificate, and add every DNS name or exact IP used in the request Host header to `Dashboard:AllowedHosts`. Remote clients require HTTPS and Windows Authentication. Loopback clients may use HTTP, but Windows Authentication is still required when remote mode is enabled. Allowed hosts default to `localhost`, `127.0.0.1`, and `::1`; wildcards and host:port entries are rejected. For a proxy, separately configure `TrustedProxies` with its exact peer IP and ensure it overwrites forwarded headers. Do not put certificate passwords in source-controlled configuration.
 
-Unsafe browser requests require a same-origin `Origin` (or same-origin `Referer` when Origin is unavailable); cross-origin and missing-origin writes are rejected. Host validation mitigates DNS rebinding and hostile Host headers. Do not expose the listener or trusted proxy to unintended networks. IIS deny-list changes additionally require `IisAdmin:EnableDenyListChanges=true`, which is disabled by default. See [docs/SECURITY.md](docs/SECURITY.md) for the endpoint matrix, threat model, migration steps, and residual risks.
+Unsafe browser requests require a same-origin `Origin` (or same-origin `Referer` when Origin is unavailable); cross-origin and missing-origin writes are rejected. Host validation mitigates DNS rebinding and hostile Host headers. Do not expose the listener or trusted proxy to unintended networks. IIS deny-list changes are enabled by default and still require the process to have IIS configuration permissions. See [docs/SECURITY.md](docs/SECURITY.md) for the endpoint matrix, threat model, migration steps, and residual risks.
 
 The findings and events export endpoints return retained data and may contain client addresses, paths, host names, and user-agent values. They are administrator-only. CSV output quotes fields and prefixes spreadsheet formula-like values to prevent CSV formula execution.
 
