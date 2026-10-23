@@ -4,11 +4,11 @@
 
 The global dashboard gate runs before routing. With `Dashboard:RemoteAccessEnabled=false` (the default), only loopback peers are accepted; loopback is a network exposure boundary and is not caller authentication. With remote access enabled, every request, including a loopback request, must use HTTPS and authenticate through Windows Negotiate. Administrator-only routes additionally require the authenticated Windows identity to belong to the Windows Administrators group.
 
-- `GET /`, static dashboard assets, `GET /health`: anonymous on loopback in default mode; authenticated Windows user in remote mode. Health returns only `ok` or `degraded` and an HTTP status.
+- `GET /`, static dashboard assets, `GET /health`, `GET /health/live`, `GET /health/ready`: anonymous on loopback in default mode; authenticated Windows user in remote mode. Health reports liveness/readiness and aggregate operational diagnostics, but not request identifiers or payloads.
 - `GET /openapi/v1.json` (Development environment only): anonymous on loopback in default mode; authenticated Windows user in remote mode. It exposes the API schema, not application data or a management operation.
 - `GET /api/events`, `/api/v2/events`, `/api/findings`, `/api/findings/{clientIp}`, `/api/findings/{clientIp}/events`, `/api/events/stream`, `/api/v2/events/stream`: anonymous on loopback in default mode; any authenticated Windows user in remote mode. These are read-only but disclose request metadata, including client IPs, paths, domains, and user agents.
 - `GET /api/incidents`, `PUT /api/incidents/{clientIp}`: Windows Administrator only. Analyst notes and workflow states are shared operational data stored in SQLite; they do not alter detector results or enforcement policy.
-- `GET /metrics`: Windows Administrator only in all modes.
+- `GET /metrics`: Windows Administrator only in all modes. Metrics use aggregate values and fixed-category labels; optional OTLP export sends these metrics to the configured collector when enabled.
 - `GET /api/ban-counts`: Windows Administrator only in all modes.
 - `PUT /api/ban-counts/{clientIp}`: Windows Administrator only; updates ban-count metadata, not the IIS deny list.
 - `GET /api/iis/sites`, `/api/iis/status`, `/api/iis/sites/{siteName}/deny-list`: Windows Administrator only.

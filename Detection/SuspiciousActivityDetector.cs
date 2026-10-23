@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace iisidsd.Detection;
 
-public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
+public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector, IDetectionModule
 {
     private const int ExtensionHistoryLimit = 5000;
     private readonly DetectionOptions _options;
@@ -62,7 +62,28 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
 
     private static readonly HashSet<string> UnusualMethods = new(StringComparer.OrdinalIgnoreCase) { "trace", "connect", "debug" };
 
+    public DetectionModuleDescriptor Descriptor { get; } = new(
+        "heuristic",
+        "Built-in HTTP heuristics",
+        DetectionOptions.SectionName);
+
     public SecurityEvent? Analyze(SecurityEvent webEvent) => AnalyzeDetailed(webEvent).Event;
+
+    public IReadOnlyList<DetectionSignal> Detect(SecurityEvent webEvent)
+        => AnalyzeDetailed(webEvent).Evidence
+            .Select(evidence => new DetectionSignal(
+                evidence.Code,
+                evidence.SignalKey,
+                evidence.CorrelationKey,
+                evidence.Family,
+                evidence.Indicator,
+                evidence.Explanation,
+                evidence.Reason ?? evidence.Indicator,
+                evidence.ConfiguredWeight,
+                evidence.FamilyPriority,
+                evidence.RepeatedBehavior,
+                evidence.ReasonOnlyWhenGeneric))
+            .ToArray();
 
     public DetectionAssessment AnalyzeDetailed(SecurityEvent webEvent)
     {
@@ -207,7 +228,16 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
             {
                 var contributes = selectedOrders.Contains(signal.Order) && signal.Weight > 0;
                 return new DetectionEvidence(signal.Code, signal.Family, signal.Indicator, signal.Weight,
-                    contributes ? signal.Weight : 0, contributes);
+                    contributes ? signal.Weight : 0, contributes,
+                    DetectorId: Descriptor.Id,
+                    SignalKey: DetectionSignalKeys.ForHeuristic(signal.Code),
+                    CorrelationKey: DetectionSignalKeys.ForHeuristic(signal.Code),
+                    Explanation: signal.Reason,
+                    Reason: signal.Reason,
+                    ReasonOnlyWhenGeneric: signal.ReasonOnlyWhenGeneric,
+                    RepeatedBehavior: signal.RepeatedBehavior,
+                    FamilyPriority: signal.FamilyPriority,
+                    Order: signal.Order);
             })
             .ToArray();
         long score = 0;
@@ -250,6 +280,7 @@ public sealed class SuspiciousActivityDetector : ISuspiciousActivityDetector
             DetectionReason = reason,
             RiskScore = riskScore,
             RiskSeverity = GetSeverity(riskScore),
+            DetectionEvidence = evidence,
             RiskIndicators = contributingSignals.OrderBy(static signal => signal.Order).Select(static signal => signal.Indicator).ToArray()
         };
 

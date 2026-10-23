@@ -14,6 +14,7 @@ using iisidsd.Detection;
 using iisidsd.Etw;
 using iisidsd.Iis;
 using iisidsd.Models;
+using iisidsd.Notifications;
 using iisidsd.Observability;
 using iisidsd.Runtime;
 using iisidsd.Services;
@@ -116,6 +117,9 @@ builder.Services.AddAuthorization(options =>
 });
 builder.Services.AddSingleton<IFindingStore, SqliteFindingStore>();
 builder.Services.AddSingleton<IAnalystIncidentStore, SqliteAnalystIncidentStore>();
+builder.Services.AddSingleton<INotificationQueue, SqliteNotificationQueue>();
+builder.Services.AddSingleton<IWindowsEventLogWriter, WindowsEventLogWriter>();
+builder.Services.AddSingleton<INotificationProvider, WindowsEventLogNotificationProvider>();
 builder.Services.AddSingleton<IEventStore, SqliteEventStore>();
 builder.Services.AddSingleton<IReplayableEventStore>(serviceProvider =>
     (IReplayableEventStore)serviceProvider.GetRequiredService<IEventStore>());
@@ -131,8 +135,12 @@ builder.Services.AddSingleton<IAppCmdRunner>(serviceProvider =>
     new AppCmdRunner(serviceProvider.GetRequiredService<ILogger<IisDenyListService>>()));
 builder.Services.AddSingleton<IIisDenyListService, IisDenyListService>();
 builder.Services.AddSingleton<IIisAutoDenyService, IisAutoDenyService>();
-builder.Services.AddSingleton<ISuspiciousActivityDetector, SuspiciousActivityDetector>();
+builder.Services.AddSingleton<SuspiciousActivityDetector>();
+builder.Services.AddSingleton<IDetectionModule>(serviceProvider =>
+    serviceProvider.GetRequiredService<SuspiciousActivityDetector>());
+builder.Services.AddSingleton<ISuspiciousActivityDetector, DetectionEngine>();
 builder.Services.AddHostedService<EventDbInitializer>();
+builder.Services.AddHostedService<NotificationDeliveryService>();
 builder.Services.AddHostedService<FindingPrunerService>();
 builder.Services.AddHostedService<EventPrunerService>();
 builder.Services.AddHostedService<TemporaryDenyListCleaner>();

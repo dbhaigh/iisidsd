@@ -21,6 +21,8 @@ const state = {
   selectedSiteName: '',
   findingEvents: [],
   incidents: {},
+  notifications: [],
+  notificationQueueStatus: null,
   incidentAccessStatus: 'loading',
   incidentAccessError: '',
   searchQuery: '',
@@ -29,6 +31,8 @@ const state = {
   eventTimeFilter: 'all',
   lastEventAt: 0,
   eventRows: new Map(),
+  serviceReadiness: 'checking',
+  etwState: 'unknown',
   databaseHealth: 'checking',
   ingestionHealth: 'checking',
   droppedEventCount: null,
@@ -110,8 +114,12 @@ const incidentState = document.querySelector('#incident-state');
 const analystNote = document.querySelector('#analyst-note');
 const incidentStateSave = document.querySelector('#incident-state-save');
 const incidentStateStatus = document.querySelector('#incident-state-status');
+const notificationQueueBody = document.querySelector('#notification-queue');
+const notificationQueueStatus = document.querySelector('#notification-queue-status');
+const notificationsRefresh = document.querySelector('#notifications-refresh');
 const relatedFindingsList = document.querySelector('#related-findings-list');
 const databaseHealth = document.querySelector('#database-health');
+const serviceHealth = document.querySelector('#service-health');
 const ingestionHealth = document.querySelector('#ingestion-health');
 const dataFreshness = document.querySelector('#data-freshness');
 let healthRefreshRunning = false;
@@ -140,6 +148,7 @@ const maxEventsInMemory = 2000;
 const initialEventLimit = 1000;
 const dayInMilliseconds = 24 * 60 * 60 * 1000;
 let configurationLoaded = false;
+let configurationRevision = null;
 
 function text(value) {
   return document.createTextNode(value ?? '');
@@ -154,6 +163,15 @@ function setConnectionStatus(message, stateName) {
 }
 
 function renderHealthIndicators() {
+  serviceHealth.dataset.state = state.serviceReadiness === 'ready'
+    ? 'ok'
+    : state.serviceReadiness === 'not-ready' ? 'warning' : 'checking';
+  serviceHealth.textContent = state.serviceReadiness === 'ready'
+    ? 'Service: ready'
+    : state.serviceReadiness === 'not-ready'
+      ? `Service: not ready · ETW ${state.etwState}`
+      : 'Service readiness: checking';
+
   databaseHealth.dataset.state = state.databaseHealth;
   databaseHealth.textContent = state.databaseHealth === 'ok'
     ? 'Database: healthy'
@@ -194,10 +212,12 @@ async function refreshDashboardHealth() {
   if (healthRefreshRunning) return;
   healthRefreshRunning = true;
   const healthRequest = fetch('/health').then(async response => {
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const result = await response.json();
-    state.databaseHealth = result.status === 'ok' ? 'ok' : 'degraded';
+    state.serviceReadiness = result.readiness ?? 'unknown';
+    state.etwState = result.checks?.etw?.state ?? 'unknown';
+    state.databaseHealth = result.checks?.sqlite?.status === 'ok' ? 'ok' : 'degraded';
   }).catch(() => {
+    state.serviceReadiness = 'unknown';
     state.databaseHealth = 'degraded';
   });
   const metricsRequest = fetch('/metrics').then(async response => {
@@ -498,6 +518,7 @@ function setView(view) {
     panel.classList.toggle('active', isSelected);
     panel.hidden = !isSelected;
   });
+  if (view === 'notifications') refreshNotifications();
 }
 
 function visibleEvent(webEvent) {
@@ -802,6 +823,73 @@ async function refreshIncidents() {
   if (state.selectedFindingIp) renderDetails();
 }
 
+async function refreshNotifications() {
+  notificationQueueStatus.textContent = 'Loading notification queue...';
+  notificationsRefresh.disabled = true;
+  try {
+    const [notifications, status] = await Promise.all([
+      fetchJson('/api/notifications?limit=250'),
+      fetchJson('/api/notifications/status')
+    ]);
+    state.notifications = notifications;
+    state.notificationQueueStatus = status;
+    notificationQueueStatus.textContent =
+      `Pending ${status.pending} · Retrying ${status.retrying} · Delivered ${status.delivered} · ` +
+      `Failed ${status.failed} · Acknowledged ${status.acknowledged} · Dropped ${status.dropped}`;
+    renderNotifications();
+  } catch (error) {
+    state.notifications = [];
+    state.notificationQueueStatus = null;
+    notificationQueueStatus.textContent = error.status === 401 || error.status === 403
+      ? 'Administrator access is required to inspect or acknowledge notifications.'
+      : `Unable to load notification queue: ${error.message}`;
+    notificationQueueBody.replaceChildren(createEmptyRow('Notification queue is unavailable.', 8));
+  } finally {
+    notificationsRefresh.disabled = false;
+  }
+}
+
+function renderNotifications() {
+  notificationQueueBody.replaceChildren();
+  if (!state.notifications.length) {
+    notificationQueueBody.append(createEmptyRow('No notification incidents recorded.', 8));
+    return;
+  }
+
+  for (const incident of state.notifications) {
+    const row = document.createElement('tr');
+    appendCells(row, [
+      `${incident.riskSeverity} (${incident.riskScore})`,
+      incident.status,
+      incident.clientIp,
+      incident.targetSite,
+      `${incident.summary} ${(incident.evidence || []).map(item => item.explanation).join('; ')}`,
+      incident.attemptCount,
+      formatTimestamp(incident.lastSeenUtc)
+    ]);
+    const actionCell = document.createElement('td');
+    if (incident.status !== 'acknowledged') {
+      const acknowledgeButton = document.createElement('button');
+      acknowledgeButton.className = 'button button-secondary';
+      acknowledgeButton.type = 'button';
+      acknowledgeButton.append(text('Acknowledge'));
+      acknowledgeButton.onclick = async () => {
+        acknowledgeButton.disabled = true;
+        try {
+          await fetchJson(`/api/notifications/${escapeSegment(incident.id)}/acknowledge`, { method: 'POST' });
+          await refreshNotifications();
+        } catch (error) {
+          notificationQueueStatus.textContent = `Unable to acknowledge notification: ${error.message}`;
+          acknowledgeButton.disabled = false;
+        }
+      };
+      actionCell.append(acknowledgeButton);
+    }
+    row.append(actionCell);
+    notificationQueueBody.append(row);
+  }
+}
+
 async function saveIncidentAnalysis() {
   const finding = selectedFinding();
   if (!finding) {
@@ -831,8 +919,13 @@ async function saveIncidentAnalysis() {
 
 function renderFindingIndicators(finding) {
   const indicators = new Set(finding.riskIndicators || []);
+  const moduleEvidence = new Map();
   for (const webEvent of state.findingEvents) {
     for (const indicator of webEvent.riskIndicators || []) indicators.add(indicator);
+    for (const evidence of webEvent.detectionEvidence || []) {
+      const key = `${evidence.detectorId}|${evidence.signalKey || evidence.indicator}|${evidence.explanation}`;
+      moduleEvidence.set(key, evidence);
+    }
   }
 
   for (const [container, values] of [
@@ -840,7 +933,8 @@ function renderFindingIndicators(finding) {
     [findingReasons, finding.detectionReasons || []]
   ]) {
     container.replaceChildren();
-    if (!values.length) {
+    const hasModuleEvidence = container === findingRiskIndicators && moduleEvidence.size > 0;
+    if (!values.length && !hasModuleEvidence) {
       const empty = document.createElement('span');
       empty.className = 'muted';
       empty.append(text('No indicators recorded.'));
@@ -871,6 +965,26 @@ function renderFindingIndicators(finding) {
         : `Default contribution +${explanation.defaultWeight}; configured weight unavailable`));
       card.append(title, description, weight);
       container.append(card);
+    }
+
+    if (container === findingRiskIndicators) {
+      for (const evidence of moduleEvidence.values()) {
+        const card = document.createElement('div');
+        card.className = 'indicator-explanation';
+        const title = document.createElement('strong');
+        title.append(text(`${evidence.detectorId} · ${evidence.signalKey || evidence.indicator}`));
+        const description = document.createElement('span');
+        description.append(text(evidence.explanation || evidence.indicator));
+        const weight = document.createElement('span');
+        weight.className = 'indicator-weight';
+        weight.append(text(evidence.observeOnly
+          ? 'Observe only; does not affect the risk score'
+          : evidence.contributed
+            ? `Contributed ${evidence.scoreContribution} points`
+            : 'Evidence recorded; not selected for scoring'));
+        card.append(title, description, weight);
+        container.append(card);
+      }
     }
   }
 }
@@ -1188,6 +1302,7 @@ async function loadBackendConfiguration() {
   try {
     const response = await fetchJson('/api/configuration');
     configurationEditor.value = JSON.stringify(response.settings, null, 2);
+    configurationRevision = response.revision;
     configurationLoaded = true;
     configurationStatus.textContent = 'Loaded the supported settings from appsettings.json.';
   } catch (error) {
@@ -1209,20 +1324,29 @@ async function saveBackendConfiguration() {
   }
 
   configurationSave.disabled = true;
+  if (!configurationRevision) {
+    configurationStatus.textContent = 'Reload the saved configuration before making changes.';
+    configurationSave.disabled = false;
+    return;
+  }
+
   configurationStatus.textContent = 'Validating and saving settings...';
   try {
     const response = await fetchJson('/api/configuration', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings })
+      body: JSON.stringify({ settings, expectedRevision: configurationRevision })
     });
     configurationEditor.value = JSON.stringify(response.settings, null, 2);
+    configurationRevision = response.revision;
     configurationLoaded = true;
     configurationStatus.textContent = 'Settings saved to appsettings.json. Restart the iisidsd service to apply them.';
   } catch (error) {
     configurationStatus.textContent = error.status === 401 || error.status === 403
       ? 'Backend configuration changes are restricted to authorized administrators.'
-      : `Unable to save backend configuration: ${error.message}`;
+      : error.status === 409
+        ? 'Configuration changed since it was loaded. Reload before saving to avoid overwriting another administrator’s changes.'
+        : `Unable to save backend configuration: ${error.message}`;
   } finally {
     configurationSave.disabled = false;
   }
@@ -1947,6 +2071,7 @@ function initializeControls() {
   initializeViewTabs();
   initializeTableControls();
   configurationReload.onclick = () => loadBackendConfiguration();
+  notificationsRefresh.onclick = () => refreshNotifications();
   configurationSave.onclick = () => saveBackendConfiguration();
   setView('events');
   applyTheme(document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
@@ -2041,7 +2166,7 @@ async function initializeDashboard() {
     streamHint.textContent = `Unable to load dashboard data: ${error.message}`;
   }
 
-  await Promise.all([refreshIncidents(), refreshDashboardHealth()]);
+  await Promise.all([refreshIncidents(), refreshNotifications(), refreshDashboardHealth()]);
 
   try {
     await refreshSites();

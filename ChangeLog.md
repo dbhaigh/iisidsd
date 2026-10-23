@@ -1,9 +1,25 @@
 # Change Log
 
-## Unreleased
+## 0.2.4 - 2026-10-22
 
 ### Added
-- Shared SQLite-backed analyst incident states and notes (capped at 5,000 records), administrator-only incident APIs, prioritized findings, evidence-focused IP investigation, system health indicators, and mode-aware bulk action review.
+- Modular detection engine preserving built-in HTTP heuristics as the default contributor; new detectors are observe-only unless explicitly enabled for scoring.
+- Structured detector evidence, deterministic cross-module deduplication, per-module health and timing metrics, and an authoring/evaluation guide.
+- Durable SQLite notification outbox with severity/score thresholds, client-and-site deduplication, cooldown, bounded retries and retention, administrator acknowledgement, and an opt-in Windows Event Log provider.
+- Shared SQLite-backed analyst incident states and notes, administrator-only incident APIs, prioritized findings, evidence-focused IP investigation, system health indicators, and mode-aware bulk action review.
+- Notification queue dashboard, status API, acknowledgement audit identity, privacy and retention documentation.
+
+### Changed
+- Event persistence now includes structured detector evidence and the notification outbox while keeping notification enqueue failures separate from detection and event persistence.
+- Operational health and metrics expose bounded ETW, SQLite, detection-module, tray, and notification state.
+- Standalone release packaging and upgrade validation preserve operator configuration, SQLite data, and diagnostics while retaining safe defaults.
+
+### Security
+- External notification delivery remains disabled by default. Only the local Windows Event Log provider is implemented; no request-supplied destination or secret-bearing notification configuration is accepted.
+- Notification templates redact common credential fields, bound evidence and payload size, and logs omit message bodies and exception text.
+
+### Validation
+- Added deterministic coverage for detector composition, observation-only evidence, notification deduplication/cooldown, retry and recovery, queue floods, retention, acknowledgement, and secret redaction.
 
 ## 0.2.3 - 2026-10-16
 

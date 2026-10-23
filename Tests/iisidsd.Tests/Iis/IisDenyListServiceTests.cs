@@ -1,6 +1,7 @@
 using iisidsd.Configuration;
 using iisidsd.Iis;
 using iisidsd.Models;
+using iisidsd.Observability;
 using iisidsd.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -92,6 +93,27 @@ public sealed class IisDenyListServiceTests
         Assert.Contains(store.Audits, audit => audit.Outcome == "requested");
         Assert.Contains(store.Audits, audit => audit.Outcome == "observed");
         Assert.Equal(0, writer.EnsureCalls);
+    }
+
+    [Fact]
+    public void AddDeniedIp_FailureUpdatesOperationalDiagnostics()
+    {
+        using var observability = new IisObservability();
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
+        var writer = new FakeIisDenyListWriter { Status = IisDenyListMutationStatus.Failed };
+        var service = CreateService(
+            options,
+            new FakeDenyListStore(),
+            new FakeSiteDiscoveryService(),
+            denyListWriter: writer,
+            observability: observability);
+
+        Assert.False(service.AddDeniedIp("Example Site", "203.0.113.75"));
+
+        var snapshot = observability.GetOperationalDiagnosticsSnapshot("test", "test");
+        Assert.Equal("failed", snapshot.LastEnforcementOutcome);
+        Assert.Equal(1, snapshot.IisAdministrationFailures);
+        Assert.Contains("iis_administration_failures 1", observability.RenderPrometheus());
     }
 
     [Fact]
@@ -409,7 +431,8 @@ public sealed class IisDenyListServiceTests
         IDenyListStore store,
         IIisSiteDiscoveryService siteDiscovery,
         IAppCmdRunner? appCmdRunner = null,
-        IIisDenyListWriter? denyListWriter = null)
+        IIisDenyListWriter? denyListWriter = null,
+        IisObservability? observability = null)
     {
         var logger = NullLogger<IisDenyListService>.Instance;
         var allowList = new IisIpAllowList(options);
@@ -420,7 +443,8 @@ public sealed class IisDenyListServiceTests
             allowList,
             options,
             appCmdRunner ?? new FakeAppCmdRunner(),
-            denyListWriter ?? new FakeIisDenyListWriter());
+            denyListWriter ?? new FakeIisDenyListWriter(),
+            observability);
     }
 
     private sealed class FakeSiteDiscoveryService(bool throwOnGetSites = false) : IIisSiteDiscoveryService

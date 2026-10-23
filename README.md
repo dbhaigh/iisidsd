@@ -7,13 +7,23 @@
 - Real-time IIS ETW ingestion from `Microsoft-Windows-IIS-Logging`
 - Persistent event storage in SQLite
 - Heuristic URL risk scoring with severity bands
+- Modular detector composition with structured, user-visible evidence
 - Aggregated suspicious-IP findings
+- Durable, opt-in security notifications with a local Windows Event Log provider
 - Shared administrator incident state and analyst notes
 - Per-IP ban-count tracking
 - IIS site discovery and deny-list inspection
 - Optional IIS deny-list modifications guarded by configuration
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls
+
+## Release 0.2.4 highlights
+
+- Detection is modular: the built-in heuristic remains the default contributor, while new modules are observe-only until explicitly configured to contribute.
+- Structured explanations and contribution status survive SQLite persistence and appear in the dashboard; per-module timing and health are observable.
+- Eligible security incidents enter a durable, deduplicated SQLite notification queue and can be delivered to the local Windows Event Log, retried, inspected, and acknowledged. Delivery is disabled by default.
+- Bounded notification retries, queue/history limits, cooldowns, privacy redaction, and retention are covered by deterministic tests. See [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) and [docs/DETECTION_MODULES.md](docs/DETECTION_MODULES.md).
+- Operational diagnostics and standalone upgrade validation cover event ingestion, SQLite, configuration, tray lifecycle, and preservation of runtime data.
 
 ## Release 0.2.3 highlights
 
@@ -57,6 +67,8 @@
 - `Models/` - API, persistence, and workflow models
 - `wwwroot/` - dashboard UI assets
 - `Tests/iisidsd.Tests/` - dashboard access, detector, aggregation, and persistence tests
+- [docs/DETECTION_MODULES.md](docs/DETECTION_MODULES.md) - module contract, registration, configuration, and evaluation guide
+- [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md) - opt-in Windows Event Log notifications, queue operation, privacy, and retention
 
 ## Configuration
 
@@ -291,7 +303,7 @@ Publish the self-contained standalone Windows x64 release with:
 
 - `dotnet publish iisidsd.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishProfile=StandaloneWinX64`
 
-The standalone package is written under `artifacts/iisidsd-0.2.3-standalone-win-x64` and includes only the executable, `appsettings.json`, and required dashboard assets. Runtime SQLite data is created beside the executable on first launch.
+The standalone package is written under `artifacts/iisidsd-0.2.4-standalone-win-x64` and includes only the executable, `appsettings.json`, and required dashboard assets. Runtime SQLite data is created beside the executable on first launch.
 
 Publish framework-dependent Windows x64 binaries with:
 

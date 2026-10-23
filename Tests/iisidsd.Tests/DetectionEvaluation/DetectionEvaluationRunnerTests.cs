@@ -154,7 +154,7 @@ public sealed class DetectionEvaluationRunnerTests
         Assert.Equal(0, sameVersionComparison.EventBehavior.DetectionsRemoved);
         Assert.Equal(225, sameVersionComparison.EventBehavior.RiskScoresUnchanged);
         Assert.False(changedComparison.SameDataset);
-        Assert.Equal("0.2.3.0", changedComparison.BaselineDetectorVersion);
+        Assert.Equal("0.2.4.0", changedComparison.BaselineDetectorVersion);
         Assert.Equal("0.2.4.0", changedComparison.CandidateDetectorVersion);
         Assert.Equal(report.DetectorRevision, changedComparison.BaselineDetectorRevision);
         Assert.Equal("candidate-revision", changedComparison.CandidateDetectorRevision);

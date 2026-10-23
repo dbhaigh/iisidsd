@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using iisidsd.Configuration;
+using iisidsd.Observability;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 
@@ -18,6 +19,20 @@ public sealed class SqliteHealthProbe(
     private readonly Lock _integritySync = new();
     private long _lastIntegrityCheckTimestamp;
     private bool _lastIntegrityCheckHealthy = true;
+    private long _lastProbeAtUtcTicks;
+    private long _failureCount;
+    private string? _lastFailureType;
+
+    public SqliteHealthSnapshot GetHealthSnapshot()
+    {
+        var healthy = IsHealthy();
+        var checkedAtTicks = Interlocked.Read(ref _lastProbeAtUtcTicks);
+        return new SqliteHealthSnapshot(
+            healthy,
+            checkedAtTicks == 0 ? null : new DateTimeOffset(checkedAtTicks, TimeSpan.Zero),
+            Interlocked.Read(ref _failureCount),
+            Volatile.Read(ref _lastFailureType));
+    }
 
     public bool IsHealthy()
     {
@@ -32,16 +47,38 @@ public sealed class SqliteHealthProbe(
             command.CommandText = "SELECT 1;";
             if (Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture) != 1)
             {
+                RecordProbeFailure("unexpected-result");
                 return false;
             }
 
-            return CheckIntegrityIfDue(connection);
+            var healthy = CheckIntegrityIfDue(connection);
+            Interlocked.Exchange(ref _lastProbeAtUtcTicks, DateTimeOffset.UtcNow.UtcDateTime.Ticks);
+            if (!healthy)
+            {
+                RecordProbeFailure("integrity-check-failed");
+            }
+
+            return healthy;
         }
         catch (SqliteException exception)
         {
-            logger.LogError(exception, "SQLite health probe failed for database {DatabasePath}.", _databasePath);
+            RecordProbeFailure("sqlite-error");
+            logger.LogError("SQLite health probe failed. FailureType={FailureType}.", exception.GetType().Name);
             return false;
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            RecordProbeFailure(exception is UnauthorizedAccessException ? "access-denied" : "probe-error");
+            logger.LogError("SQLite health probe failed. FailureType={FailureType}.", exception.GetType().Name);
+            return false;
+        }
+    }
+
+    private void RecordProbeFailure(string failureType)
+    {
+        Interlocked.Increment(ref _failureCount);
+        Interlocked.Exchange(ref _lastProbeAtUtcTicks, DateTimeOffset.UtcNow.UtcDateTime.Ticks);
+        Volatile.Write(ref _lastFailureType, failureType);
     }
 
     private bool CheckIntegrityIfDue(SqliteConnection connection)

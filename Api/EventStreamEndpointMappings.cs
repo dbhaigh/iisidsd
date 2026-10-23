@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using iisidsd.Configuration;
 using iisidsd.Models;
+using iisidsd.Observability;
 using iisidsd.Storage;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -73,8 +74,9 @@ public static class EventStreamEndpointMappings
             string? domain,
             bool? suspiciousOnly,
             string? afterSequence,
+            IisObservability observability,
             IOptions<DashboardOptions> options) =>
-            StreamEventsAsync(context, replayableStore, jsonOptions, clientIp, domain, suspiciousOnly, afterSequence, options.Value, useEnvelope: false));
+            StreamEventsAsync(context, replayableStore, jsonOptions, clientIp, domain, suspiciousOnly, afterSequence, options.Value, observability, useEnvelope: false));
 
         webApp.MapGet("/api/v2/events/stream", (
             HttpContext context,
@@ -83,8 +85,9 @@ public static class EventStreamEndpointMappings
             string? domain,
             bool? suspiciousOnly,
             string? afterSequence,
+            IisObservability observability,
             IOptions<DashboardOptions> options) =>
-            StreamEventsAsync(context, replayableStore, jsonOptions, clientIp, domain, suspiciousOnly, afterSequence, options.Value, useEnvelope: true));
+            StreamEventsAsync(context, replayableStore, jsonOptions, clientIp, domain, suspiciousOnly, afterSequence, options.Value, observability, useEnvelope: true));
     }
 
     private static async Task<IResult> StreamEventsAsync(
@@ -96,6 +99,7 @@ public static class EventStreamEndpointMappings
         bool? suspiciousOnly,
         string? afterSequence,
         DashboardOptions options,
+        IisObservability observability,
         bool useEnvelope)
     {
         if (!EventQueryValidation.TryValidate(null, 100, MaximumPageSize, clientIp, domain,
@@ -128,6 +132,7 @@ public static class EventStreamEndpointMappings
         }
         catch (EventStreamSubscriberLimitException)
         {
+            observability.RecordEventStreamFailure();
             context.Response.Headers.RetryAfter = "1";
             return Results.Problem(
                 "The event stream is at its configured concurrent-client limit. Retry after another client disconnects.",
@@ -144,6 +149,12 @@ public static class EventStreamEndpointMappings
             });
         }
 
+        observability.RecordEventStreamStarted();
+        void RecordWriteFailure()
+        {
+            if (!context.RequestAborted.IsCancellationRequested) observability.RecordEventStreamFailure();
+        }
+
         var cancellationToken = context.RequestAborted;
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = "text/event-stream; charset=utf-8";
@@ -154,6 +165,7 @@ public static class EventStreamEndpointMappings
             await context.Response.StartAsync(cancellationToken);
             if (!await WriteFrameAsync(context, ": connected\nretry: 1000\n\n", options.EventStreamWriteTimeoutSeconds, cancellationToken))
             {
+                RecordWriteFailure();
                 return Results.Empty;
             }
 
@@ -176,6 +188,7 @@ public static class EventStreamEndpointMappings
                         }, jsonOptions);
                         if (!await WriteEventAsync(context, "recovery", cursor, recovery, options.EventStreamWriteTimeoutSeconds, cancellationToken))
                         {
+                            RecordWriteFailure();
                             return Results.Empty;
                         }
                     }
@@ -188,6 +201,7 @@ public static class EventStreamEndpointMappings
                             var checkpoint = JsonSerializer.Serialize(new { type = "stream.checkpoint", cursor }, jsonOptions);
                             if (!await WriteEventAsync(context, "checkpoint", cursor, checkpoint, options.EventStreamWriteTimeoutSeconds, cancellationToken))
                             {
+                                RecordWriteFailure();
                                 return Results.Empty;
                             }
                         }
@@ -204,6 +218,7 @@ public static class EventStreamEndpointMappings
                             var checkpoint = JsonSerializer.Serialize(new { type = "stream.checkpoint", cursor }, jsonOptions);
                             if (!await WriteEventAsync(context, "checkpoint", cursor, checkpoint, options.EventStreamWriteTimeoutSeconds, cancellationToken))
                             {
+                                RecordWriteFailure();
                                 return Results.Empty;
                             }
 
@@ -212,6 +227,7 @@ public static class EventStreamEndpointMappings
 
                         if (!await WriteSecurityEventAsync(context, item.ToSecurityEvent(), cursor, useEnvelope, jsonOptions, options.EventStreamWriteTimeoutSeconds, cancellationToken))
                         {
+                            RecordWriteFailure();
                             return Results.Empty;
                         }
                     }
@@ -224,6 +240,7 @@ public static class EventStreamEndpointMappings
                             var checkpoint = JsonSerializer.Serialize(new { type = "stream.checkpoint", cursor }, jsonOptions);
                             if (!await WriteEventAsync(context, "checkpoint", cursor, checkpoint, options.EventStreamWriteTimeoutSeconds, cancellationToken))
                             {
+                                RecordWriteFailure();
                                 return Results.Empty;
                             }
                         }
@@ -252,6 +269,7 @@ public static class EventStreamEndpointMappings
 
                     if (!await WriteFrameAsync(context, $": heartbeat {DateTimeOffset.UtcNow:O}\n\n", options.EventStreamWriteTimeoutSeconds, cancellationToken))
                     {
+                        RecordWriteFailure();
                         break;
                     }
 
@@ -269,6 +287,7 @@ public static class EventStreamEndpointMappings
                         var checkpoint = JsonSerializer.Serialize(new { type = "stream.checkpoint", cursor }, jsonOptions);
                         if (!await WriteEventAsync(context, "checkpoint", cursor, checkpoint, options.EventStreamWriteTimeoutSeconds, cancellationToken))
                         {
+                            RecordWriteFailure();
                             return Results.Empty;
                         }
 
@@ -277,6 +296,7 @@ public static class EventStreamEndpointMappings
 
                     if (!await WriteSecurityEventAsync(context, webEvent, cursor, useEnvelope, jsonOptions, options.EventStreamWriteTimeoutSeconds, cancellationToken))
                     {
+                        RecordWriteFailure();
                         return Results.Empty;
                     }
                 }
@@ -284,6 +304,7 @@ public static class EventStreamEndpointMappings
         }
         catch (EventStreamSlowConsumerException)
         {
+            observability.RecordEventStreamFailure();
             var recovery = JsonSerializer.Serialize(new
             {
                 type = "stream.recovery",
@@ -299,9 +320,20 @@ public static class EventStreamEndpointMappings
         catch (IOException) when (context.RequestAborted.IsCancellationRequested)
         {
         }
+        catch (IOException)
+        {
+            observability.RecordEventStreamFailure();
+            throw;
+        }
+        catch (Exception) when (!context.RequestAborted.IsCancellationRequested)
+        {
+            observability.RecordEventStreamFailure();
+            throw;
+        }
         finally
         {
             subscriberLifetime.Cancel();
+            observability.RecordEventStreamEnded();
         }
 
         return Results.Empty;

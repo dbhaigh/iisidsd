@@ -63,6 +63,38 @@ public sealed class EtwIngestionPipelineTests
     }
 
     [Fact]
+    public async Task ObservationOnlyEvidence_IsPersistedWithoutMarkingEventSuspicious()
+    {
+        using var observability = new IisObservability();
+        var store = new FakeEventStore();
+        var evidence = new DetectionEvidence(
+            DetectionSignalCode.Custom,
+            DetectionEvidenceFamily.PathContent,
+            "observed indicator",
+            8,
+            0,
+            false,
+            DetectorId: "optional-detector",
+            SignalKey: "optional.signal",
+            Explanation: "The optional detector saw a pattern.",
+            ObserveOnly: true);
+        var detector = new FakeDetector
+        {
+            AnalyzeEvent = static _ => null,
+            Assessment = new(null, DetectionEvidenceScope.None, DetectionEvidenceStrength.None, 0, [evidence])
+        };
+        var pipeline = CreatePipeline(store, observability, detector);
+        Assert.True(pipeline.TryEnqueue(CreatePayload("observe-only")));
+        pipeline.Complete();
+        await pipeline.ProcessAsync();
+
+        var persistedEvent = Assert.Single(store.Events);
+        Assert.False(persistedEvent.IsSuspicious);
+        Assert.Equal(0, persistedEvent.RiskScore);
+        Assert.Equal(evidence, Assert.Single(persistedEvent.DetectionEvidence ?? []));
+    }
+
+    [Fact]
     public async Task SlowPersistence_SaturatesBoundedQueueThenRecoversWithoutLosingAcceptedEvents()
     {
         using var observability = new IisObservability();
@@ -124,6 +156,15 @@ public sealed class EtwIngestionPipelineTests
         Assert.Single(store.PublishedEvents);
         Assert.Equal(2, observability.EventProcessingRetries);
         Assert.Equal(1, observability.EventsProcessed);
+        var diagnostics = observability.GetOperationalDiagnosticsSnapshot("test", "test");
+        Assert.Equal(1, diagnostics.DetectionEventsAnalyzed);
+        Assert.Equal(2, diagnostics.RecoveryAttempts);
+        Assert.All(diagnostics.RecentOperationalEvents, operationalEvent =>
+        {
+            Assert.Equal("sqlite", operationalEvent.Component);
+            Assert.Equal("recovery", operationalEvent.Kind);
+            Assert.Equal("IOException", operationalEvent.FailureType);
+        });
     }
 
     private static EtwIngestionPipeline CreatePipeline(
@@ -163,7 +204,10 @@ public sealed class EtwIngestionPipelineTests
     private sealed class FakeDetector : ISuspiciousActivityDetector
     {
         public Func<SecurityEvent, SecurityEvent?> AnalyzeEvent { get; init; } = static webEvent => webEvent;
+        public DetectionAssessment? Assessment { get; init; }
         public SecurityEvent? Analyze(SecurityEvent webEvent) => AnalyzeEvent(webEvent);
+        public DetectionAssessment AnalyzeDetailed(SecurityEvent webEvent)
+            => Assessment ?? new(AnalyzeEvent(webEvent), DetectionEvidenceScope.None, DetectionEvidenceStrength.None, 0, []);
     }
 
     private sealed class FakeAutoDenyService : IIisAutoDenyService

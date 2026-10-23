@@ -10,7 +10,7 @@ public sealed class EventDbInitializer(
     IFindingStore findingStore,
     ILogger<EventDbInitializer> logger) : IHostedService
 {
-    private const int CurrentSchemaVersion = 3;
+    private const int CurrentSchemaVersion = 5;
     private readonly string _databasePath = GetDatabasePath(hostEnvironment.ContentRootPath, storageOptions.Value.DatabasePath);
     private readonly IFindingStore _findingStore = findingStore;
     private readonly ILogger<EventDbInitializer> _logger = logger;
@@ -48,7 +48,8 @@ public sealed class EventDbInitializer(
                     detection_reason TEXT NULL,
                     risk_score INTEGER NOT NULL,
                     risk_severity TEXT NOT NULL,
-                    risk_indicators_json TEXT NOT NULL
+                    risk_indicators_json TEXT NOT NULL,
+                    detection_evidence_json TEXT NOT NULL DEFAULT '[]'
                 );
 
                 CREATE INDEX IF NOT EXISTS ix_events_timestamp_utc ON events(timestamp_utc DESC);
@@ -174,6 +175,43 @@ public sealed class EventDbInitializer(
                     updated_by TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS notification_incidents (
+                    notification_id TEXT PRIMARY KEY,
+                    deduplication_key TEXT NOT NULL UNIQUE,
+                    client_ip TEXT NOT NULL,
+                    target_site TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    risk_score INTEGER NOT NULL,
+                    risk_severity TEXT NOT NULL,
+                    event_timestamp_utc TEXT NOT NULL,
+                    first_seen_utc TEXT NOT NULL,
+                    last_seen_utc TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('pending', 'retry', 'delivered', 'failed', 'acknowledged')),
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_utc TEXT NULL,
+                    last_attempt_utc TEXT NULL,
+                    delivered_utc TEXT NULL,
+                    acknowledged_utc TEXT NULL,
+                    last_failure_type TEXT NULL,
+                    acknowledged_by TEXT NULL,
+                    cooldown_until_utc TEXT NOT NULL,
+                    created_utc TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_notification_incidents_due
+                    ON notification_incidents(status, next_attempt_utc, first_seen_utc);
+                CREATE INDEX IF NOT EXISTS ix_notification_incidents_last_seen
+                    ON notification_incidents(last_seen_utc DESC);
+
+                CREATE TABLE IF NOT EXISTS notification_queue_state (
+                    singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+                    dropped_count INTEGER NOT NULL DEFAULT 0
+                );
+
+                INSERT OR IGNORE INTO notification_queue_state (singleton_id, dropped_count)
+                VALUES (1, 0);
+
                 CREATE INDEX IF NOT EXISTS ix_analyst_incidents_updated
                     ON analyst_incidents(updated_utc DESC);
 
@@ -189,6 +227,7 @@ public sealed class EventDbInitializer(
         }
 
         EnsureEventRetentionCursorSchema(connection, transaction);
+        EnsureDetectionEvidenceSchema(connection, transaction);
         EnsureBanCountSchema(connection, transaction);
         using (var versionCommand = connection.CreateCommand())
         {
@@ -210,6 +249,33 @@ public sealed class EventDbInitializer(
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    private static void EnsureDetectionEvidenceSchema(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var hasDetectionEvidence = false;
+        using (var columnCheck = connection.CreateCommand())
+        {
+            columnCheck.Transaction = transaction;
+            columnCheck.CommandText = "PRAGMA table_info(events);";
+            using var reader = columnCheck.ExecuteReader();
+            while (reader.Read())
+            {
+                if (string.Equals(reader.GetString(1), "detection_evidence_json", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasDetectionEvidence = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasDetectionEvidence)
+        {
+            using var alterCommand = connection.CreateCommand();
+            alterCommand.Transaction = transaction;
+            alterCommand.CommandText = "ALTER TABLE events ADD COLUMN detection_evidence_json TEXT NOT NULL DEFAULT '[]';";
+            alterCommand.ExecuteNonQuery();
+        }
+    }
 
     private static void EnsureEventRetentionCursorSchema(SqliteConnection connection, SqliteTransaction transaction)
     {

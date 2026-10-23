@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using iisidsd.Configuration;
@@ -20,12 +21,104 @@ public static class DashboardEndpointMappings
 {
     public static void MapDashboardEndpoints(this WebApplication webApp, JsonSerializerOptions jsonOptions)
     {
-        webApp.MapGet("/health", (SqliteHealthProbe sqliteHealthProbe) =>
+        webApp.MapGet("/health/live", () => Results.Json(new { status = "ok", liveness = "live" }))
+            .AllowAnonymous();
+
+        webApp.MapGet("/health/ready", (
+            SqliteHealthProbe sqliteHealthProbe,
+            IisObservability observability,
+            IOptions<IisEtwOptions> etwOptions) =>
         {
-            var sqliteConnectionHealthy = sqliteHealthProbe.IsHealthy();
-            return Results.Json(new { status = sqliteConnectionHealthy ? "ok" : "degraded" }, statusCode: sqliteConnectionHealthy
-                ? StatusCodes.Status200OK
-                : StatusCodes.Status503ServiceUnavailable);
+            var sqlite = sqliteHealthProbe.GetHealthSnapshot();
+            var diagnostics = observability.GetOperationalDiagnosticsSnapshot("unknown", "unknown");
+            var etwRequired = etwOptions.Value.Enabled;
+            var etwState = observability.EtwSubscriptionState;
+            var etwReady = !etwRequired || etwState == EtwSubscriptionState.Listening;
+            var ready = sqlite.Healthy && etwReady;
+            return Results.Json(new
+            {
+                status = ready ? "ok" : "degraded",
+                readiness = ready ? "ready" : "not-ready",
+                checks = new
+                {
+                    sqlite = new
+                    {
+                        status = sqlite.Healthy ? "ok" : "failed",
+                        sqlite.LastCheckedAtUtc,
+                        sqlite.FailureCount,
+                        sqlite.LastFailureType
+                    },
+                    etw = new
+                    {
+                        status = etwReady ? "ok" : "not-ready",
+                        required = etwRequired,
+                        state = etwState.ToString().ToLowerInvariant(),
+                        diagnostics.EtwSubscriptionChangedAtUtc
+                    }
+                }
+            }, statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
+        }).AllowAnonymous();
+
+        webApp.MapGet("/health", (
+            SqliteHealthProbe sqliteHealthProbe,
+            IisObservability observability,
+            IOptions<IisEtwOptions> etwOptions,
+            IOptions<StorageOptions> storageOptions,
+            IOptions<IisAdminOptions> adminOptions,
+            IOptions<DetectionOptions> detectionOptions) =>
+        {
+            var sqlite = sqliteHealthProbe.GetHealthSnapshot();
+            var version = typeof(DashboardEndpointMappings).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+            var configurationRevision = GetConfigurationRevision(
+                etwOptions.Value,
+                storageOptions.Value,
+                adminOptions.Value,
+                detectionOptions.Value);
+            var diagnostics = observability.GetOperationalDiagnosticsSnapshot(version, configurationRevision);
+            var etwRequired = etwOptions.Value.Enabled;
+            var etwState = observability.EtwSubscriptionState;
+            var etwReady = !etwRequired || etwState == EtwSubscriptionState.Listening;
+            var ready = sqlite.Healthy && etwReady;
+            var enforcementPolicy = adminOptions.Value.GetEnforcementPolicy();
+            var lastEnforcement = diagnostics.LastEnforcementOutcome is null
+                ? null
+                : new
+                {
+                    outcome = diagnostics.LastEnforcementOutcome,
+                    occurredAt = diagnostics.LastEnforcementOccurredAtUtc,
+                    dryRun = diagnostics.LastEnforcementWasSimulation
+                };
+
+            return Results.Json(new
+            {
+                status = ready ? "ok" : "degraded",
+                liveness = "live",
+                readiness = ready ? "ready" : "not-ready",
+                version,
+                configurationRevision,
+                dryRun = adminOptions.Value.DryRun,
+                enforcementMode = enforcementPolicy.Mode.ToString().ToLowerInvariant(),
+                droppedEventCount = diagnostics.EtwEventsDropped,
+                lastEnforcement,
+                checks = new
+                {
+                    sqlite = new
+                    {
+                        status = sqlite.Healthy ? "ok" : "failed",
+                        sqlite.LastCheckedAtUtc,
+                        sqlite.FailureCount,
+                        sqlite.LastFailureType
+                    },
+                    etw = new
+                    {
+                        status = etwReady ? "ok" : "not-ready",
+                        required = etwRequired,
+                        state = etwState.ToString().ToLowerInvariant(),
+                        diagnostics.EtwSubscriptionChangedAtUtc
+                    }
+                },
+                operational = diagnostics
+            }, statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
         }).AllowAnonymous();
 
         webApp.MapGet("/metrics", (IisObservability observability) =>
@@ -93,6 +186,35 @@ public static class DashboardEndpointMappings
                 request.Status,
                 request.Note,
                 context.User.Identity?.Name ?? "unknown"));
+        }).RequireAuthorization("DashboardAdministrator");
+
+        webApp.MapGet("/api/notifications", (INotificationQueue notificationQueue, int? limit) =>
+            Results.Ok(notificationQueue.List(limit ?? 250)))
+            .RequireAuthorization("DashboardAdministrator");
+
+        webApp.MapGet("/api/notifications/status", (INotificationQueue notificationQueue) =>
+            Results.Ok(notificationQueue.GetStatus()))
+            .RequireAuthorization("DashboardAdministrator");
+
+        webApp.MapPost("/api/notifications/{notificationId}/acknowledge", (
+            INotificationQueue notificationQueue,
+            TimeProvider timeProvider,
+            HttpContext context,
+            string notificationId) =>
+        {
+            if (!Guid.TryParseExact(notificationId, "N", out _))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    [nameof(notificationId)] = ["Notification ID must be a 32-character hexadecimal identifier."]
+                });
+            }
+
+            var incident = notificationQueue.Acknowledge(
+                notificationId,
+                timeProvider.GetUtcNow(),
+                context.User.Identity?.Name ?? "unknown");
+            return incident is null ? Results.NotFound() : Results.Ok(incident);
         }).RequireAuthorization("DashboardAdministrator");
 
         webApp.MapGet("/api/findings/{clientIp}", (IIpAggregationService aggregationService, string clientIp, string? domain) =>
@@ -507,6 +629,46 @@ public static class DashboardEndpointMappings
         }).RequireAuthorization("DashboardAdministrator");
 
         webApp.MapEventStreamEndpoints(jsonOptions);
+    }
+
+    private static string GetConfigurationRevision(
+        IisEtwOptions etw,
+        StorageOptions storage,
+        IisAdminOptions admin,
+        DetectionOptions detection)
+    {
+        var policy = admin.GetEnforcementPolicy();
+        var safeSettings = JsonSerializer.Serialize(new
+        {
+            etw.Enabled,
+            etw.IngestionBufferSize,
+            etw.ProcessingBatchSize,
+            storage.JournalMode,
+            storage.SynchronousMode,
+            storage.BusyTimeoutSeconds,
+            storage.EventRetentionLimit,
+            storage.EventRetentionDays,
+            enforcementMode = policy.Mode.ToString(),
+            policy.WritesEnabled,
+            admin.EnableDenyListChanges,
+            admin.DryRun,
+            admin.TemporaryBanMinutes,
+            admin.RequireMultipleIndicators,
+            detection.MinimumSuspiciousStatusCode,
+            detection.NotFoundBurstThreshold,
+            detection.NotFoundBurstWindowSeconds,
+            detection.AuthenticationFailureThreshold,
+            detection.AuthenticationFailureWindowSeconds,
+            detection.RateThreshold,
+            detection.RateWindowSeconds,
+            detection.PathScanUniquePathThreshold,
+            detection.PathScanWindowSeconds,
+            detection.MaximumTrackedClientHistories,
+            detection.MaximumTrackedHistoryBuckets,
+            detection.MaximumEventLatenessSeconds
+        });
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(safeSettings));
+        return Convert.ToHexString(hash)[..12].ToLowerInvariant();
     }
 
     private static IResult CreateExportResult<T>(

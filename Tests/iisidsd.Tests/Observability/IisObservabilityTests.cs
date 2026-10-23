@@ -3,6 +3,7 @@ using iisidsd.Models;
 using iisidsd.Observability;
 using iisidsd.Storage;
 using Microsoft.Data.Sqlite;
+using System.Text.Json;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -69,6 +70,66 @@ public sealed class IisObservabilityTests : IDisposable
     }
 
     [Fact]
+    public void Diagnostics_ExposeAggregateMetricsWithoutRequestData()
+    {
+        using var observability = new IisObservability();
+        var securityEvent = new SecurityEvent(
+            DateTimeOffset.UtcNow,
+            "server01",
+            "example.test",
+            "GET",
+            "/private-path",
+            "203.0.113.10",
+            404,
+            "private-agent",
+            new Dictionary<string, string>(),
+            IsSuspicious: true,
+            RiskScore: 8,
+            RiskSeverity: "Critical",
+            RiskIndicators: ["indicator-a", "indicator-b"]);
+
+        observability.SetQueueCapacity(64);
+        observability.SetEtwSubscriptionState(EtwSubscriptionState.Listening);
+        observability.RecordDetectionAnalyzed(securityEvent);
+        observability.RecordEventStreamStarted();
+        observability.RecordEventStreamFailure();
+        observability.RecordEventStreamEnded();
+        observability.RecordEventRetentionRun(3);
+        observability.RecordIisEnforcementOutcome("failed", simulation: false);
+        observability.RecordExpiryCleanupCandidate();
+        observability.RecordExpiryCleanupFailure();
+        observability.RecordRecoveryAttempt("sqlite", "SqliteException");
+        observability.RecordFatalError("runtime", "InvalidOperationException");
+
+        var metrics = observability.RenderPrometheus();
+        var snapshot = observability.GetOperationalDiagnosticsSnapshot("0.2.3", "abc123");
+        var serializedSnapshot = JsonSerializer.Serialize(snapshot);
+
+        Assert.Contains("queue_capacity 64", metrics);
+        Assert.Contains("etw_subscription_state{state=\"listening\"} 1", metrics);
+        Assert.Contains("detection_events_analyzed 1", metrics);
+        Assert.Contains("detection_indicators 2", metrics);
+        Assert.Contains("detection_events_by_severity{severity=\"critical\"} 1", metrics);
+        Assert.Contains("detection_risk_score_bucket{le=\"8\"} 1", metrics);
+        Assert.Contains("event_stream_connections 1", metrics);
+        Assert.Contains("event_stream_failures 1", metrics);
+        Assert.Contains("event_retention_events_pruned 3", metrics);
+        Assert.Contains("iis_expiry_cleanup_failed 1", metrics);
+        Assert.Contains("recovery_attempts 1", metrics);
+        Assert.Contains("fatal_errors 1", metrics);
+        Assert.Equal(0, snapshot.ActiveEventStreams);
+        Assert.Equal(1, snapshot.IisAdministrationFailures);
+        Assert.Equal(1, snapshot.DetectionEventsBySeverity["critical"]);
+        Assert.Equal(5, snapshot.DetectionEventsBySeverity.Count);
+        Assert.DoesNotContain("203.0.113.10", metrics);
+        Assert.DoesNotContain("/private-path", metrics);
+        Assert.DoesNotContain("private-agent", metrics);
+        Assert.DoesNotContain("203.0.113.10", serializedSnapshot);
+        Assert.DoesNotContain("/private-path", serializedSnapshot);
+        Assert.DoesNotContain("private-agent", serializedSnapshot);
+    }
+
+    [Fact]
     public void SqliteHealthProbe_ReportsConnectionStatus()
     {
         Directory.CreateDirectory(_rootPath);
@@ -92,8 +153,13 @@ public sealed class IisObservabilityTests : IDisposable
             environment,
             NullLogger<SqliteHealthProbe>.Instance);
 
-        Assert.True(healthyProbe.IsHealthy());
-        Assert.False(missingDatabaseProbe.IsHealthy());
+        Assert.True(healthyProbe.GetHealthSnapshot().Healthy);
+        var missingSnapshot = missingDatabaseProbe.GetHealthSnapshot();
+        Assert.False(missingSnapshot.Healthy);
+        Assert.Equal(1, missingSnapshot.FailureCount);
+        Assert.Equal("sqlite-error", missingSnapshot.LastFailureType);
+        Assert.NotNull(missingSnapshot.LastCheckedAtUtc);
+        Assert.DoesNotContain("missing.sqlite3", JsonSerializer.Serialize(missingSnapshot));
     }
 
     public void Dispose()

@@ -5,4 +5,6 @@ namespace iisidsd.Detection;
 public interface ISuspiciousActivityDetector
 {
     SecurityEvent? Analyze(SecurityEvent webEvent);
+
+    DetectionAssessment AnalyzeDetailed(SecurityEvent webEvent);
 }

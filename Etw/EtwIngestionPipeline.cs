@@ -43,6 +43,7 @@ public sealed class EtwIngestionPipeline
         _logger = logger;
         _batchSize = options.Value.ProcessingBatchSize;
         _isTransientStoreFailure = isTransientStoreFailure ?? IsTransientSqliteFailure;
+        _observability.SetQueueCapacity(options.Value.IngestionBufferSize);
         _queue = Channel.CreateBounded<EtwEventPayload>(new BoundedChannelOptions(options.Value.IngestionBufferSize)
         {
             FullMode = BoundedChannelFullMode.Wait,
@@ -140,7 +141,10 @@ public sealed class EtwIngestionPipeline
 
             try
             {
-                analyzedEvents.Add((payload, _detector.Analyze(webEvent!) ?? webEvent!));
+                var assessment = _detector.AnalyzeDetailed(webEvent!);
+                var analyzedEvent = assessment.Event ?? (webEvent! with { DetectionEvidence = assessment.Evidence });
+                _observability.RecordDetectionAnalyzed(analyzedEvent);
+                analyzedEvents.Add((payload, analyzedEvent));
             }
             catch (Exception exception)
             {
@@ -171,6 +175,7 @@ public sealed class EtwIngestionPipeline
             catch (Exception exception) when (_isTransientStoreFailure(exception))
             {
                 _observability.RecordEventProcessingRetry();
+                _observability.RecordRecoveryAttempt("sqlite", exception.GetType().Name);
                 LogRateLimited(ref _lastRetryWarning, LogLevel.Warning,
                     "SQLite is temporarily unavailable; retaining {BatchSize} accepted event(s) for retry. FailureType={FailureType}",
                     events.Length,
@@ -232,6 +237,7 @@ public sealed class EtwIngestionPipeline
             catch (Exception exception) when (_isTransientStoreFailure(exception))
             {
                 _observability.RecordEventProcessingRetry();
+                _observability.RecordRecoveryAttempt("sqlite", exception.GetType().Name);
                 LogRateLimited(ref _lastRetryWarning, LogLevel.Warning,
                     "SQLite is temporarily unavailable while saving ETW diagnostics. FailureType={FailureType}",
                     exception.GetType().Name);

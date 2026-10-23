@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Xml.Linq;
 using iisidsd.Configuration;
 using iisidsd.Models;
+using iisidsd.Observability;
 using iisidsd.Storage;
 using Microsoft.Extensions.Options;
 
@@ -17,6 +18,7 @@ public sealed class IisDenyListService : IIisDenyListService
     private readonly IIpAllowList _ipAllowList;
     private readonly IIisDenyListWriter _iisDenyListWriter;
     private readonly IisAdminOptions _adminOptions;
+    private readonly IisObservability? _observability;
     private readonly ILogger<IisDenyListService> _logger;
     private readonly Lock _mutationSync = new();
 
@@ -55,7 +57,8 @@ public sealed class IisDenyListService : IIisDenyListService
         IIpAllowList ipAllowList,
         IOptions<IisAdminOptions> adminOptions,
         IAppCmdRunner appCmdRunner,
-        IIisDenyListWriter iisDenyListWriter)
+        IIisDenyListWriter iisDenyListWriter,
+        IisObservability? observability = null)
     {
         _appCmd = appCmdRunner;
         _siteDiscoveryService = siteDiscoveryService;
@@ -63,6 +66,7 @@ public sealed class IisDenyListService : IIisDenyListService
         _ipAllowList = ipAllowList;
         _iisDenyListWriter = iisDenyListWriter;
         _adminOptions = ValidateOptions(adminOptions.Value);
+        _observability = observability;
         _logger = logger;
     }
 
@@ -642,23 +646,20 @@ public sealed class IisDenyListService : IIisDenyListService
         DateTimeOffset? expiresAt = null,
         Exception? exception = null)
     {
-        const string message = "IIS deny-list {Action} {Outcome}. ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason} SiteName={SiteName} ExpiresAt={ExpiresAt}";
-        var logDomain = securityEvent?.Domain ?? domain;
-        var riskScore = securityEvent?.RiskScore;
-        var riskSeverity = securityEvent?.RiskSeverity;
-        var detectionReason = securityEvent?.DetectionReason;
+        const string message = "IIS deny-list operation completed. Action={Action} Outcome={Outcome} FailureType={FailureType}";
+        var failureType = exception?.GetType().Name;
 
         if (exception is not null)
         {
-            _logger.LogError(exception, message, action, outcome, clientIp, logDomain, riskScore, riskSeverity, detectionReason, siteName, expiresAt);
+            _logger.LogError(message, action, outcome, failureType);
         }
         else if (outcome == "failed")
         {
-            _logger.LogWarning(message, action, outcome, clientIp, logDomain, riskScore, riskSeverity, detectionReason, siteName, expiresAt);
+            _logger.LogWarning(message, action, outcome, failureType);
         }
         else
         {
-            _logger.LogInformation(message, action, outcome, clientIp, logDomain, riskScore, riskSeverity, detectionReason, siteName, expiresAt);
+            _logger.LogInformation(message, action, outcome, failureType);
         }
     }
 
@@ -676,7 +677,8 @@ public sealed class IisDenyListService : IIisDenyListService
         string outcome,
         DenyListEnforcementPolicy policy,
         DateTimeOffset? expiresAt = null)
-        => _denyListStore.RecordAudit(new DenyListAuditRecord(
+    {
+        var auditId = _denyListStore.RecordAudit(new DenyListAuditRecord(
             0,
             string.IsNullOrWhiteSpace(actor) ? "unknown" : actor,
             action,
@@ -687,6 +689,31 @@ public sealed class IisDenyListService : IIisDenyListService
             policy.Mode != DenyListEnforcementMode.Enforce,
             outcome,
             expiresAt));
+
+        if (outcome is not ("requested" or "attempted"))
+        {
+            _observability?.RecordIisEnforcementOutcome(outcome, policy.IsSimulation);
+            if (action == "expire")
+            {
+                switch (outcome)
+                {
+                    case "simulated-expiry":
+                        _observability?.RecordExpiryCleanupSimulated();
+                        break;
+                    case "expired":
+                    case "expired-already-removed":
+                        _observability?.RecordExpiryCleanupSucceeded();
+                        break;
+                    case "failed":
+                    case "recovery-required":
+                        _observability?.RecordExpiryCleanupFailure();
+                        break;
+                }
+            }
+        }
+
+        return auditId;
+    }
 
     private static IisDenyListMutationResult RetryIisMutation(Func<IisDenyListMutationResult> mutation)
     {

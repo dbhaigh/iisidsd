@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Principal;
 using System.ServiceProcess;
@@ -47,9 +48,33 @@ public sealed class TrayIconService(
         {
             try
             {
-                using var context = new TrayApplicationContext(_options.BrowserUrl, applicationLifetime, logger);
-                contextReady.TrySetResult(context);
-                Application.Run(context);
+                using var trayMutex = new Mutex(initiallyOwned: false, "Local\\iisidsd-tray-companion");
+                bool ownsMutex;
+                try
+                {
+                    ownsMutex = trayMutex.WaitOne(0);
+                }
+                catch (AbandonedMutexException)
+                {
+                    ownsMutex = true;
+                }
+
+                if (!ownsMutex)
+                {
+                    contextReady.TrySetCanceled();
+                    return;
+                }
+
+                try
+                {
+                    using var context = new TrayApplicationContext(_options.BrowserUrl, applicationLifetime, logger);
+                    contextReady.TrySetResult(context);
+                    Application.Run(context);
+                }
+                finally
+                {
+                    trayMutex.ReleaseMutex();
+                }
             }
             catch (Exception exception)
             {
@@ -75,6 +100,7 @@ public sealed class TrayIconService(
     {
         private const string ServiceName = "iisidsd";
         private const string TrayCompanionTaskName = "iisidsd Tray Companion";
+        private const string ServiceAccount = "NT SERVICE\\iisidsd";
 
         private readonly NotifyIcon _icon;
         private readonly string _browserUrl;
@@ -83,15 +109,18 @@ public sealed class TrayIconService(
         private readonly ToolStripMenuItem _installService;
         private readonly ToolStripMenuItem _serviceStatusItem;
         private readonly ToolStripMenuItem _dashboardStatusItem;
-        private readonly ToolStripMenuItem _dryRunStatusItem;
+        private readonly ToolStripMenuItem _enforcementModeStatusItem;
         private readonly ToolStripMenuItem _droppedEventsStatusItem;
-        private readonly ToolStripMenuItem _lastAutoDenyStatusItem;
+        private readonly ToolStripMenuItem _lastEnforcementStatusItem;
         private readonly ToolStripMenuItem _startService;
         private readonly ToolStripMenuItem _stopService;
         private readonly ToolStripMenuItem _restartService;
         private readonly ToolStripMenuItem _uninstallService;
         private readonly System.Windows.Forms.Timer _serviceStateTimer;
-        private readonly HttpClient _healthClient = new() { Timeout = TimeSpan.FromSeconds(2) };
+        private readonly HttpClient _healthClient = new(new HttpClientHandler { UseDefaultCredentials = true })
+        {
+            Timeout = TimeSpan.FromSeconds(2)
+        };
         private bool _healthCheckInProgress;
         private readonly bool _trayOnlyProcess = Environment.GetCommandLineArgs()
             .Any(arg => string.Equals(arg, "--tray-only", StringComparison.OrdinalIgnoreCase));
@@ -115,14 +144,14 @@ public sealed class TrayIconService(
             var menu = new ContextMenuStrip();
             _serviceStatusItem = new ToolStripMenuItem("Service: Checking") { Enabled = false };
             _dashboardStatusItem = new ToolStripMenuItem("Dashboard: Checking") { Enabled = false };
-            _dryRunStatusItem = new ToolStripMenuItem("DryRun: Checking") { Enabled = false };
+            _enforcementModeStatusItem = new ToolStripMenuItem("Enforcement: Checking") { Enabled = false };
             _droppedEventsStatusItem = new ToolStripMenuItem("Dropped events: Checking") { Enabled = false };
-            _lastAutoDenyStatusItem = new ToolStripMenuItem("Last auto-deny: Checking") { Enabled = false };
+            _lastEnforcementStatusItem = new ToolStripMenuItem("Last enforcement: Checking") { Enabled = false };
             menu.Items.Add(_serviceStatusItem);
             menu.Items.Add(_dashboardStatusItem);
-            menu.Items.Add(_dryRunStatusItem);
+            menu.Items.Add(_enforcementModeStatusItem);
             menu.Items.Add(_droppedEventsStatusItem);
-            menu.Items.Add(_lastAutoDenyStatusItem);
+            menu.Items.Add(_lastEnforcementStatusItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Open dashboard", null, (_, _) => OpenDashboard());
             menu.Items.Add(new ToolStripSeparator());
@@ -186,25 +215,26 @@ public sealed class TrayIconService(
                 if (Uri.TryCreate(_browserUrl, UriKind.Absolute, out var baseUri))
                 {
                     using var response = await _healthClient.GetAsync(new Uri(baseUri, "health"));
-                    _dashboardStatusItem.Text = response.IsSuccessStatusCode
-                        ? "Dashboard: Available"
-                        : $"Dashboard: Unavailable (HTTP {(int)response.StatusCode})";
-                    if (response.IsSuccessStatusCode)
+                    using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+                    var health = document.RootElement;
+                    var isLive = health.TryGetProperty("liveness", out var liveness) && liveness.GetString() == "live";
+                    var isReady = health.TryGetProperty("readiness", out var readiness) && readiness.GetString() == "ready";
+                    _dashboardStatusItem.Text = !isLive
+                        ? $"Dashboard: Unavailable (HTTP {(int)response.StatusCode})"
+                        : isReady ? "Dashboard: Available" : "Dashboard: Degraded";
+                    if (isLive)
                     {
-                        using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
-                        var health = document.RootElement;
-                        _dryRunStatusItem.Text = health.GetProperty("dryRun").GetBoolean() ? "DryRun: ON" : "DryRun: OFF";
+                        _enforcementModeStatusItem.Text =
+                            $"Enforcement: {health.GetProperty("enforcementMode").GetString()}";
                         _droppedEventsStatusItem.Text =
                             $"Dropped events: {health.GetProperty("droppedEventCount").GetInt64():N0}";
 
-                        var lastAutoDeny = health.GetProperty("lastAutoDeny");
-                        _lastAutoDenyStatusItem.Text = lastAutoDeny.ValueKind == JsonValueKind.Null
-                            ? "Last auto-deny: none"
-                            : $"Last auto-deny: {lastAutoDeny.GetProperty("clientIp").GetString()} at " +
-                              $"{lastAutoDeny.GetProperty("occurredAt").GetDateTimeOffset():g}" +
-                              (lastAutoDeny.GetProperty("dryRun").GetBoolean()
-                                  ? $" (dry run, {lastAutoDeny.GetProperty("outcome").GetString()})"
-                                  : $" ({lastAutoDeny.GetProperty("outcome").GetString()})");
+                                                var lastEnforcement = health.GetProperty("lastEnforcement");
+                                                _lastEnforcementStatusItem.Text = lastEnforcement.ValueKind == JsonValueKind.Null
+                                                        ? "Last enforcement: none"
+                                                        : $"Last enforcement: {lastEnforcement.GetProperty("outcome").GetString()} at " +
+                                                            $"{lastEnforcement.GetProperty("occurredAt").GetDateTimeOffset():g}" +
+                                                            (lastEnforcement.GetProperty("dryRun").ValueKind == JsonValueKind.True ? " (simulation)" : string.Empty);
 
                         if (_openDashboardWhenReady)
                         {
@@ -237,9 +267,9 @@ public sealed class TrayIconService(
 
         private void SetOperationsStatusUnavailable()
         {
-            _dryRunStatusItem.Text = "DryRun: unavailable";
+            _enforcementModeStatusItem.Text = "Enforcement: unavailable";
             _droppedEventsStatusItem.Text = "Dropped events: unavailable";
-            _lastAutoDenyStatusItem.Text = "Last auto-deny: unavailable";
+            _lastEnforcementStatusItem.Text = "Last enforcement: unavailable";
         }
 
         private static bool IsAdministrator()
@@ -250,13 +280,29 @@ public sealed class TrayIconService(
         }
 
         private bool TryGetServiceStatus(out ServiceControllerStatus? status)
+            => TryGetServiceStatus(out status, out _);
+
+        private bool TryGetServiceStatus(out ServiceControllerStatus? status, out bool serviceNotInstalled)
         {
+            serviceNotInstalled = false;
             try
             {
                 using var service = new ServiceController(ServiceName);
                 service.Refresh();
                 status = service.Status;
                 return true;
+            }
+            catch (InvalidOperationException exception) when (IsServiceNotInstalled(exception))
+            {
+                serviceNotInstalled = true;
+                status = null;
+                return false;
+            }
+            catch (Win32Exception exception) when (exception.NativeErrorCode == 1060)
+            {
+                serviceNotInstalled = true;
+                status = null;
+                return false;
             }
             catch (Exception exception)
             {
@@ -265,6 +311,9 @@ public sealed class TrayIconService(
                 return false;
             }
         }
+
+        private static bool IsServiceNotInstalled(InvalidOperationException exception)
+            => exception.InnerException is Win32Exception { NativeErrorCode: 1060 };
 
         private void InstallService()
             => _ = ExecuteServiceOperationAsync("Install service", () => StartServiceWithShutdownAsync("Install service"));
@@ -282,8 +331,7 @@ public sealed class TrayIconService(
 
             if (_trayOnlyProcess)
             {
-                var started = await Task.Run(() =>
-                    RunScCommand($"start {ServiceName}") || ScheduleDetachedStartRetries());
+                var started = await Task.Run(StartServiceWithBoundedRetries);
                 started = started && await WaitForServiceDashboardReadyAsync(TimeSpan.FromSeconds(60));
                 ShowResult(operation, started, "Run as Administrator to manage Windows services.");
                 return;
@@ -309,7 +357,7 @@ public sealed class TrayIconService(
             => _ = ExecuteServiceOperationAsync("Restart service", async () =>
             {
                 var stopped = await Task.Run(() => StopServiceAndWait(TimeSpan.FromSeconds(60)));
-                var started = stopped && await Task.Run(() => RunScCommand($"start {ServiceName}"));
+                var started = stopped && await Task.Run(StartServiceWithBoundedRetries);
                 started = started && await WaitForServiceDashboardReadyAsync(TimeSpan.FromSeconds(60));
                 ShowResult("Restart service", started, "Run as Administrator to manage Windows services.");
             });
@@ -331,7 +379,7 @@ public sealed class TrayIconService(
                 return false;
             }
 
-            if (!RunScCommand($"stop {ServiceName}"))
+            if (!RunScCommand("stop", ServiceName))
             {
                 return false;
             }
@@ -358,12 +406,30 @@ public sealed class TrayIconService(
         private void UninstallService()
             => _ = ExecuteServiceOperationAsync("Uninstall service", async () =>
             {
-                var success = await Task.Run(() =>
-                    StopServiceAndWait(TimeSpan.FromSeconds(60)) &&
-                    RunScCommand($"delete {ServiceName}") &&
-                    RemoveTrayCompanionAutoStart());
+                var success = await Task.Run(UninstallServiceAndClean);
                 ShowResult("Uninstall service", success, "Run as Administrator to manage Windows services.");
             });
+
+        private bool UninstallServiceAndClean()
+        {
+            if (!TryGetServiceStatus(out var status, out var serviceNotInstalled))
+            {
+                return serviceNotInstalled && RemoveTrayCompanionAutoStart();
+            }
+
+            if (status != ServiceControllerStatus.Stopped && !StopServiceAndWait(TimeSpan.FromSeconds(60)))
+            {
+                return false;
+            }
+
+            if (!RunScCommand("delete", ServiceName) &&
+                (!TryGetServiceStatus(out _, out serviceNotInstalled) || !serviceNotInstalled))
+            {
+                return false;
+            }
+
+            return RemoveTrayCompanionAutoStart();
+        }
 
         private async Task ExecuteServiceOperationAsync(string operation, Func<Task> action)
         {
@@ -380,50 +446,110 @@ public sealed class TrayIconService(
 
         private bool EnsureServiceInstalled()
         {
-            if (TryGetServiceStatus(out _))
-            {
-                return EnsureServiceStartupAndRecovery() && EnsureTrayCompanionAutoStart();
-            }
-
             var processPath = ResolveServiceProcessPath();
-            if (string.IsNullOrWhiteSpace(processPath))
+            if (string.IsNullOrWhiteSpace(processPath) || !File.Exists(processPath))
             {
                 return false;
             }
 
-            var created = RunScCommand($"create {ServiceName} binPath= \"{processPath}\" start= auto");
-            if (!created || !RunScCommand($"description {ServiceName} \"IIS intrusion detection service\""))
+            var serviceAlreadyInstalled = TryGetServiceStatus(out _, out var serviceNotInstalled);
+            if (!serviceAlreadyInstalled && !serviceNotInstalled)
+            {
+                return false;
+            }
+            var created = serviceAlreadyInstalled
+                ? RunScCommand(
+                    "config", ServiceName,
+                    "binPath=", $"\"{processPath}\"",
+                    "start=", "auto")
+                : RunScCommand(
+                    "create", ServiceName,
+                    "binPath=", $"\"{processPath}\"",
+                    "start=", "auto",
+                    "obj=", ServiceAccount);
+            if (!created || !RunScCommand("description", ServiceName, "IIS intrusion detection service"))
             {
                 return false;
             }
 
-            return EnsureServiceStartupAndRecovery() && EnsureTrayCompanionAutoStart();
+            return EnsureServiceStartupAndRecovery() &&
+                EnsureServiceRuntimePermissions(processPath, grantVirtualServiceAccount: !serviceAlreadyInstalled) &&
+                EnsureTrayCompanionAutoStart();
         }
 
         private bool EnsureServiceStartupAndRecovery()
         {
-            return RunScCommand($"config {ServiceName} start= auto") &&
-                RunScCommand($"failure {ServiceName} reset= 86400 actions= restart/5000/restart/15000/restart/60000") &&
-                RunScCommand($"failureflag {ServiceName} 1");
+            return RunScCommand("config", ServiceName, "start=", "auto") &&
+                RunScCommand("failure", ServiceName, "reset=", "86400", "actions=", "restart/5000/restart/15000/restart/60000") &&
+                RunScCommand("failureflag", ServiceName, "1") &&
+                RunScCommand("sidtype", ServiceName, "unrestricted");
         }
 
-        private bool ScheduleDetachedStartRetries()
+        private bool EnsureServiceRuntimePermissions(string processPath, bool grantVirtualServiceAccount)
+        {
+            var installDirectory = Path.GetDirectoryName(processPath);
+            if (string.IsNullOrWhiteSpace(installDirectory)) return false;
+            var dataDirectory = Path.Combine(installDirectory, "data");
+            var settingsPath = Path.Combine(installDirectory, "appsettings.json");
+            Directory.CreateDirectory(dataDirectory);
+            if (!grantVirtualServiceAccount) return true;
+            if (!File.Exists(settingsPath)) return false;
+            return RunIcaclsCommand(installDirectory, "/grant", $"{ServiceAccount}:(OI)(CI)(RX)", "/T", "/C") &&
+                RunIcaclsCommand(installDirectory, "/grant", $"{ServiceAccount}:(WD)") &&
+                RunIcaclsCommand(settingsPath, "/grant", $"{ServiceAccount}:(M)") &&
+                RunIcaclsCommand(dataDirectory, "/grant", $"{ServiceAccount}:(OI)(CI)(M)", "/T", "/C");
+        }
+
+        private bool RunIcaclsCommand(params string[] arguments)
         {
             try
             {
-                var retryCommand = $"/c \"timeout /t 2 /nobreak >nul & for /l %i in (1,1,20) do (sc.exe start {ServiceName} && exit /b 0 || timeout /t 1 /nobreak >nul)\"";
-                using var process = Process.Start(new ProcessStartInfo("cmd.exe", retryCommand)
+                var startInfo = new ProcessStartInfo("icacls.exe")
                 {
-                    UseShellExecute = true,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                });
-                return process is not null;
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+                using var process = Process.Start(startInfo);
+                if (process is null) return false;
+                var outputTask = process.StandardOutput.ReadToEndAsync();
+                var errorTask = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(30_000))
+                {
+                    process.Kill(entireProcessTree: true);
+                    _logger.LogError("icacls.exe timed out while granting service runtime permissions.");
+                    return false;
+                }
+
+                Task.WaitAll(outputTask, errorTask);
+                if (process.ExitCode == 0) return true;
+                _logger.LogError("icacls.exe failed with exit code {ExitCode} while granting service runtime permissions.", process.ExitCode);
+                return false;
             }
             catch (Exception exception)
             {
-                _logger.LogError(exception, "Unable to schedule detached service start retries for {ServiceName}.", ServiceName);
+                _logger.LogError(exception, "Unable to grant service runtime permissions.");
                 return false;
             }
+        }
+
+        private bool StartServiceWithBoundedRetries()
+        {
+            for (var attempt = 1; attempt <= 3; attempt++)
+            {
+                if (RunScCommand("start", ServiceName) ||
+                    (TryGetServiceStatus(out var status) && status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending))
+                {
+                    return true;
+                }
+
+                if (attempt < 3) Thread.Sleep(TimeSpan.FromSeconds(attempt));
+            }
+
+            _logger.LogError("Service {ServiceName} did not accept a start request after three bounded attempts.", ServiceName);
+            return false;
         }
 
         private bool EnsureTrayCompanionAutoStart()
@@ -435,8 +561,12 @@ public sealed class TrayIconService(
             }
 
             var trayCommand = $"\"{processPath}\" --tray-only";
-            var arguments = $"/create /tn \"{TrayCompanionTaskName}\" /sc onlogon /tr \"{trayCommand}\" /rl LIMITED /f";
-            var success = RunSchtasksCommand(arguments, ignoreNotFound: false);
+            var success = RunSchtasksCommand(
+                ignoreNotFound: false,
+                "/create", "/tn", TrayCompanionTaskName,
+                "/sc", "onlogon",
+                "/tr", trayCommand,
+                "/rl", "LIMITED", "/f");
             if (!success)
             {
                 _logger.LogWarning("Unable to register tray companion auto-start task {TaskName}.", TrayCompanionTaskName);
@@ -447,42 +577,56 @@ public sealed class TrayIconService(
 
         private bool RemoveTrayCompanionAutoStart()
         {
-            var arguments = $"/delete /tn \"{TrayCompanionTaskName}\" /f";
-            return RunSchtasksCommand(arguments, ignoreNotFound: true);
+            return RunSchtasksCommand(
+                ignoreNotFound: true,
+                "/delete", "/tn", TrayCompanionTaskName, "/f");
         }
 
-        private bool RunSchtasksCommand(string arguments, bool ignoreNotFound)
+        private bool RunSchtasksCommand(bool ignoreNotFound, params string[] arguments)
         {
             try
             {
-                using var process = Process.Start(new ProcessStartInfo("schtasks.exe", arguments)
+                var startInfo = new ProcessStartInfo("schtasks.exe")
                 {
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true
-                });
+                };
+                foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+                using var process = Process.Start(startInfo);
                 if (process is null)
                 {
                     return false;
                 }
 
-                process.WaitForExit();
-                var output = process.StandardOutput.ReadToEnd();
-                var error = process.StandardError.ReadToEnd();
+                var outputTask = process.StandardOutput.ReadToEndAsync();
+                var errorTask = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(30_000))
+                {
+                    process.Kill(entireProcessTree: true);
+                    _logger.LogError("schtasks.exe {Operation} timed out.", arguments.FirstOrDefault() ?? "task operation");
+                    return false;
+                }
+
+                Task.WaitAll(outputTask, errorTask);
 
                 if (process.ExitCode == 0)
                 {
                     return true;
                 }
 
-                var detail = string.IsNullOrWhiteSpace(error) ? output : error;
+                var detail = string.IsNullOrWhiteSpace(errorTask.Result) ? outputTask.Result : errorTask.Result;
                 if (ignoreNotFound && detail.Contains("cannot find", StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }
 
-                _logger.LogWarning("schtasks.exe {Arguments} failed with exit code {ExitCode}. Output: {Output}", arguments, process.ExitCode, detail);
+                _logger.LogWarning(
+                    "schtasks.exe {Operation} failed with exit code {ExitCode}. {Output}",
+                    arguments.FirstOrDefault() ?? "task operation",
+                    process.ExitCode,
+                    detail.Trim());
                 return false;
             }
             catch (Exception exception)
@@ -580,7 +724,7 @@ public sealed class TrayIconService(
                 return true;
             }
 
-            return RunScCommand($"start {ServiceName}") ||
+            return StartServiceWithBoundedRetries() ||
                 (TryGetServiceStatus(out status) &&
                  status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending);
         }
@@ -598,11 +742,20 @@ public sealed class TrayIconService(
                         if (Uri.TryCreate(_browserUrl, UriKind.Absolute, out var baseUri))
                         {
                             using var healthResponse = await _healthClient.GetAsync(new Uri(baseUri, "health"));
+                            using var healthDocument = JsonDocument.Parse(await healthResponse.Content.ReadAsStreamAsync());
+                            var health = healthDocument.RootElement;
+                            var isReady = health.TryGetProperty("readiness", out var readiness) &&
+                                readiness.ValueKind == JsonValueKind.String &&
+                                string.Equals(readiness.GetString(), "ready", StringComparison.Ordinal);
+                            var expectedVersion = typeof(TrayIconService).Assembly.GetName().Version?.ToString(3);
+                            var isExpectedVersion = health.TryGetProperty("version", out var version) &&
+                                version.ValueKind == JsonValueKind.String &&
+                                string.Equals(version.GetString(), expectedVersion, StringComparison.Ordinal);
                             var dashboardUri = new Uri(baseUri.GetLeftPart(UriPartial.Authority) + "/");
                             using var pageResponse = await _healthClient.GetAsync(dashboardUri);
                             using var scriptResponse = await _healthClient.GetAsync(new Uri(baseUri, "app.js"));
                             using var stylesResponse = await _healthClient.GetAsync(new Uri(baseUri, "site.css"));
-                            if (healthResponse.IsSuccessStatusCode &&
+                            if (healthResponse.IsSuccessStatusCode && isReady && isExpectedVersion &&
                                 pageResponse.IsSuccessStatusCode &&
                                 string.Equals(
                                     pageResponse.Content.Headers.ContentType?.MediaType,
@@ -615,11 +768,13 @@ public sealed class TrayIconService(
                             }
 
                             _logger.LogDebug(
-                                "Service dashboard readiness check returned HTTP {HealthStatus}, {PageStatus}, {ScriptStatus}, and {StylesStatus}.",
+                                "Service dashboard readiness check returned HTTP {HealthStatus}, {PageStatus}, {ScriptStatus}, and {StylesStatus}; Ready={Ready} ExpectedVersion={ExpectedVersion}.",
                                 (int)healthResponse.StatusCode,
                                 (int)pageResponse.StatusCode,
                                 (int)scriptResponse.StatusCode,
-                                (int)stylesResponse.StatusCode);
+                                (int)stylesResponse.StatusCode,
+                                isReady,
+                                isExpectedVersion);
                         }
                     }
                     catch (HttpRequestException exception)
@@ -629,6 +784,10 @@ public sealed class TrayIconService(
                     catch (TaskCanceledException exception)
                     {
                         _logger.LogDebug(exception, "Dashboard readiness check timed out at {Url}.", _browserUrl);
+                    }
+                    catch (JsonException)
+                    {
+                        _logger.LogDebug("Dashboard readiness endpoint did not return the expected JSON response.");
                     }
                 }
 
@@ -667,32 +826,45 @@ public sealed class TrayIconService(
             }
         }
 
-        private bool RunScCommand(string arguments)
+        private bool RunScCommand(params string[] arguments)
         {
             try
             {
-                using var process = Process.Start(new ProcessStartInfo("sc.exe", arguments)
+                var startInfo = new ProcessStartInfo("sc.exe")
                 {
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true
-                });
+                };
+                foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+                using var process = Process.Start(startInfo);
                 if (process is null)
                 {
                     return false;
                 }
 
-                process.WaitForExit();
+                var outputTask = process.StandardOutput.ReadToEndAsync();
+                var errorTask = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(30_000))
+                {
+                    process.Kill(entireProcessTree: true);
+                    _logger.LogError("sc.exe {Operation} timed out.", arguments.FirstOrDefault() ?? "service operation");
+                    return false;
+                }
+
+                Task.WaitAll(outputTask, errorTask);
                 if (process.ExitCode == 0)
                 {
                     return true;
                 }
 
-                var error = process.StandardError.ReadToEnd();
-                var output = process.StandardOutput.ReadToEnd();
-                var detail = string.IsNullOrWhiteSpace(error) ? output : error;
-                _logger.LogWarning("sc.exe {Arguments} failed with exit code {ExitCode}. Output: {Output}", arguments, process.ExitCode, detail);
+                var detail = string.IsNullOrWhiteSpace(errorTask.Result) ? outputTask.Result : errorTask.Result;
+                _logger.LogWarning(
+                    "sc.exe {Operation} failed with exit code {ExitCode}. {Output}",
+                    arguments.FirstOrDefault() ?? "service operation",
+                    process.ExitCode,
+                    detail.Trim());
                 return false;
             }
             catch (Exception exception)

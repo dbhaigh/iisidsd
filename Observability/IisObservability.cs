@@ -1,6 +1,9 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Text;
+using iisidsd.Configuration;
 using iisidsd.Models;
 using iisidsd.Storage;
 
@@ -44,6 +47,10 @@ public sealed class IisObservability : IDisposable
         60
     ];
 
+    private static readonly double[] RiskScoreBucketBounds = [0, 1, 2, 3, 5, 8, 10, 15, 20, 50];
+    private static readonly double[] DetectionIndicatorBucketBounds = [0, 1, 2, 3, 5, 10];
+    private static readonly string[] SeverityNames = ["low", "medium", "high", "critical", "other"];
+
     private readonly Meter _meter = new(MeterName, "1.0.0");
     private readonly Counter<long> _etwEventsReceived;
     private readonly Counter<long> _etwEventsAccepted;
@@ -67,8 +74,36 @@ public sealed class IisObservability : IDisposable
     private readonly Counter<long> _extensionCacheCapacityRejections;
     private readonly Histogram<double> _sqliteWriteDuration;
     private readonly Histogram<double> _eventPipelineLatency;
+    private readonly Counter<long> _detectionEventsAnalyzed;
+    private readonly Counter<long> _detectionIndicators;
+    private readonly Counter<long> _detectionEventsBySeverity;
+    private readonly Histogram<double> _detectionRiskScore;
+    private readonly Histogram<double> _detectionIndicatorCount;
+    private readonly Counter<long> _detectionModuleEvaluations;
+    private readonly Counter<long> _detectionModuleFailures;
+    private readonly Counter<long> _detectionModuleSignals;
+    private readonly Histogram<double> _detectionModuleProcessingDuration;
+    private readonly Counter<long> _eventStreamConnections;
+    private readonly Counter<long> _eventStreamFailures;
+    private readonly Counter<long> _eventRetentionRuns;
+    private readonly Counter<long> _eventRetentionEventsPruned;
+    private readonly Counter<long> _eventRetentionFailures;
+    private readonly Counter<long> _iisAdministrationFailures;
+    private readonly Counter<long> _expiryCleanupCandidates;
+    private readonly Counter<long> _expiryCleanupSucceeded;
+    private readonly Counter<long> _expiryCleanupSimulated;
+    private readonly Counter<long> _expiryCleanupFailed;
+    private readonly Counter<long> _recoveryAttempts;
+    private readonly Counter<long> _fatalErrors;
     private readonly long[] _durationBucketCounts = new long[DurationBucketBounds.Length];
     private readonly long[] _pipelineLatencyBucketCounts = new long[PipelineLatencyBucketBounds.Length];
+    private readonly long[] _riskScoreBucketCounts = new long[RiskScoreBucketBounds.Length];
+    private readonly long[] _detectionIndicatorBucketCounts = new long[DetectionIndicatorBucketBounds.Length];
+    private readonly long[] _detectionSeverityCounts = new long[SeverityNames.Length];
+    private readonly object _recentEventsSync = new();
+    private readonly ConcurrentDictionary<string, DetectionModuleHealthSnapshot> _detectionModules = new(StringComparer.Ordinal);
+    private readonly Queue<RecentOperationalEvent> _recentOperationalEvents = new();
+    private readonly DateTimeOffset _startedAtUtc = DateTimeOffset.UtcNow;
     private long _etwEventsReceivedCount;
     private long _etwEventsAcceptedCount;
     private long _etwEventsDroppedCount;
@@ -100,6 +135,29 @@ public sealed class IisObservability : IDisposable
     private long _sqliteWriteDurationTicks;
     private long _pipelineLatencyCount;
     private long _pipelineLatencyTicks;
+    private long _detectionEventsAnalyzedCount;
+    private long _detectionIndicatorsCount;
+    private long _detectionRiskScoreSum;
+    private long _eventStreamActiveClientCount;
+    private long _eventStreamConnectionCount;
+    private long _eventStreamFailureCount;
+    private long _eventRetentionRunCount;
+    private long _eventRetentionPrunedCount;
+    private long _eventRetentionFailureCount;
+    private long _iisAdministrationFailureCount;
+    private long _expiryCleanupCandidateCount;
+    private long _expiryCleanupSucceededCount;
+    private long _expiryCleanupSimulatedCount;
+    private long _expiryCleanupFailureCount;
+    private long _recoveryAttemptCount;
+    private long _fatalErrorCount;
+    private long _queueCapacity;
+    private long _etwSubscriptionState;
+    private long _etwSubscriptionChangedAtTicks;
+    private long _lastRetentionAtTicks;
+    private long _lastEnforcementAtTicks;
+    private string? _lastEnforcementOutcome;
+    private bool? _lastEnforcementSimulation;
 
     public IisObservability()
     {
@@ -125,8 +183,32 @@ public sealed class IisObservability : IDisposable
         _extensionCacheCapacityRejections = _meter.CreateCounter<long>("detection_extension_cache_capacity_rejections", "{entry}", "Site extension-cache admission or learning rejected at configured capacity.");
         _sqliteWriteDuration = _meter.CreateHistogram<double>("sqlite_write_duration", "s", "Duration of SQLite event writes.");
         _eventPipelineLatency = _meter.CreateHistogram<double>("etw_pipeline_latency", "s", "Time from callback reception to successful event persistence.");
+        _detectionEventsAnalyzed = _meter.CreateCounter<long>("detection_events_analyzed", "{event}", "Events successfully analyzed by the detector.");
+        _detectionIndicators = _meter.CreateCounter<long>("detection_indicators", "{indicator}", "Risk indicators produced by detector analysis.");
+        _detectionEventsBySeverity = _meter.CreateCounter<long>("detection_events_by_severity", "{event}", "Analyzed events by fixed risk severity.");
+        _detectionRiskScore = _meter.CreateHistogram<double>("detection_risk_score", "{score}", "Risk score distribution for analyzed events.");
+        _detectionIndicatorCount = _meter.CreateHistogram<double>("detection_indicator_count", "{indicator}", "Indicator count distribution per analyzed event.");
+        _detectionModuleEvaluations = _meter.CreateCounter<long>("detection_module_evaluations", "{evaluation}", "Events evaluated by a detector module.");
+        _detectionModuleFailures = _meter.CreateCounter<long>("detection_module_failures", "{failure}", "Detector module evaluations that failed.");
+        _detectionModuleSignals = _meter.CreateCounter<long>("detection_module_signals", "{signal}", "Signals returned by detector modules, including observation-only signals.");
+        _detectionModuleProcessingDuration = _meter.CreateHistogram<double>("detection_module_processing_duration", "ms", "Detector module processing time per event.");
+        _eventStreamConnections = _meter.CreateCounter<long>("event_stream_connections", "{connection}", "Event stream clients connected.");
+        _eventStreamFailures = _meter.CreateCounter<long>("event_stream_failures", "{failure}", "Event stream failures.");
+        _eventRetentionRuns = _meter.CreateCounter<long>("event_retention_runs", "{run}", "Event retention runs completed.");
+        _eventRetentionEventsPruned = _meter.CreateCounter<long>("event_retention_events_pruned", "{event}", "Events deleted by retention.");
+        _eventRetentionFailures = _meter.CreateCounter<long>("event_retention_failures", "{failure}", "Event retention runs that failed.");
+        _iisAdministrationFailures = _meter.CreateCounter<long>("iis_administration_failures", "{failure}", "IIS administration operations that failed.");
+        _expiryCleanupCandidates = _meter.CreateCounter<long>("iis_expiry_cleanup_candidates", "{entry}", "Expired deny-list entries considered by cleanup.");
+        _expiryCleanupSucceeded = _meter.CreateCounter<long>("iis_expiry_cleanup_succeeded", "{entry}", "Expired deny-list entries removed successfully.");
+        _expiryCleanupSimulated = _meter.CreateCounter<long>("iis_expiry_cleanup_simulated", "{entry}", "Expired deny-list entries simulated without IIS changes.");
+        _expiryCleanupFailed = _meter.CreateCounter<long>("iis_expiry_cleanup_failed", "{failure}", "Expired deny-list entries that could not be removed.");
+        _recoveryAttempts = _meter.CreateCounter<long>("recovery_attempts", "{attempt}", "Background recovery attempts.");
+        _fatalErrors = _meter.CreateCounter<long>("fatal_errors", "{error}", "Fatal background or process errors recorded.");
         _meter.CreateObservableGauge("queue_depth", () => QueueDepth, "{event}", "Current ETW ingestion queue depth.");
+        _meter.CreateObservableGauge("queue_capacity", () => QueueCapacity, "{event}", "Configured ETW ingestion queue capacity.");
         _meter.CreateObservableGauge("queue_high_water_mark", () => QueueHighWaterMark, "{event}", "Maximum ETW ingestion queue depth in this process.");
+        _meter.CreateObservableGauge("event_stream_active_clients", () => ActiveEventStreamClients, "{client}", "Current active event stream clients.");
+        _meter.CreateObservableGauge("etw_subscription_state", GetEtwSubscriptionStateMeasurements, "{state}", "Current ETW subscription lifecycle state.");
         _meter.CreateObservableGauge("detection_client_histories", () => Interlocked.Read(ref _trackedDetectionHistories), "{history}", "Current in-memory detector client/site histories.");
         _meter.CreateObservableGauge("detection_history_buckets", () => Interlocked.Read(ref _trackedHistoryBuckets), "{bucket}", "Current in-memory detector event-time buckets.");
         _meter.CreateObservableGauge("detection_extension_sites", () => Interlocked.Read(ref _trackedExtensionSites), "{site}", "Current in-memory detector site extension caches.");
@@ -147,6 +229,348 @@ public sealed class IisObservability : IDisposable
     public long EventProcessingFailures => Interlocked.Read(ref _eventProcessingFailureCount);
     public long EventProcessingRetries => Interlocked.Read(ref _eventProcessingRetryCount);
     public long AutoDenyFailures => Interlocked.Read(ref _autoDenyFailureCount);
+    public long QueueCapacity => Interlocked.Read(ref _queueCapacity);
+    public long ActiveEventStreamClients => Interlocked.Read(ref _eventStreamActiveClientCount);
+    public EtwSubscriptionState EtwSubscriptionState
+        => (EtwSubscriptionState)Interlocked.Read(ref _etwSubscriptionState);
+    public DateTimeOffset? EtwSubscriptionChangedAtUtc
+    {
+        get
+        {
+            var ticks = Interlocked.Read(ref _etwSubscriptionChangedAtTicks);
+            return ticks == 0 ? null : new DateTimeOffset(ticks, TimeSpan.Zero);
+        }
+    }
+
+    public OperationalDiagnosticsSnapshot GetOperationalDiagnosticsSnapshot(string version, string configurationRevision)
+    {
+        string? lastEnforcementOutcome;
+        bool? lastEnforcementSimulation;
+        lock (_recentEventsSync)
+        {
+            lastEnforcementOutcome = _lastEnforcementOutcome;
+            lastEnforcementSimulation = _lastEnforcementSimulation;
+        }
+
+        var enforcementTicks = Interlocked.Read(ref _lastEnforcementAtTicks);
+        var retentionTicks = Interlocked.Read(ref _lastRetentionAtTicks);
+        return new OperationalDiagnosticsSnapshot(
+            _startedAtUtc,
+            Math.Max(0, (DateTimeOffset.UtcNow - _startedAtUtc).TotalSeconds),
+            version,
+            configurationRevision,
+            EtwSubscriptionState.ToString().ToLowerInvariant(),
+            EtwSubscriptionChangedAtUtc,
+            LastEventTimestamp,
+            QueueDepth,
+            checked((int)QueueCapacity),
+            QueueHighWaterMark,
+            Interlocked.Read(ref _etwEventsReceivedCount),
+            Interlocked.Read(ref _etwEventsAcceptedCount),
+            Interlocked.Read(ref _etwEventsDroppedCount),
+            Interlocked.Read(ref _etwEventsMalformedCount),
+            Interlocked.Read(ref _eventsProcessedCount),
+            Interlocked.Read(ref _eventProcessingFailureCount),
+            Interlocked.Read(ref _eventProcessingRetryCount),
+            Interlocked.Read(ref _detectionEventsAnalyzedCount),
+            Interlocked.Read(ref _detectionIndicatorsCount),
+            GetDetectionSeverityCounts(),
+            ActiveEventStreamClients,
+            Interlocked.Read(ref _eventStreamConnectionCount),
+            Interlocked.Read(ref _eventStreamFailureCount),
+            Interlocked.Read(ref _sqliteWriteFailureCount),
+            Interlocked.Read(ref _sqliteBusyFailureCount),
+            Interlocked.Read(ref _sqliteCorruptionFailureCount),
+            Interlocked.Read(ref _sqliteDiskFullFailureCount),
+            Interlocked.Read(ref _eventRetentionRunCount),
+            Interlocked.Read(ref _eventRetentionPrunedCount),
+            Interlocked.Read(ref _eventRetentionFailureCount),
+            retentionTicks == 0 ? null : new DateTimeOffset(retentionTicks, TimeSpan.Zero),
+            Interlocked.Read(ref _iisAdministrationFailureCount),
+            Interlocked.Read(ref _expiryCleanupCandidateCount),
+            Interlocked.Read(ref _expiryCleanupSucceededCount),
+            Interlocked.Read(ref _expiryCleanupSimulatedCount),
+            Interlocked.Read(ref _expiryCleanupFailureCount),
+            Interlocked.Read(ref _recoveryAttemptCount),
+            Interlocked.Read(ref _fatalErrorCount),
+            lastEnforcementOutcome,
+            enforcementTicks == 0 ? null : new DateTimeOffset(enforcementTicks, TimeSpan.Zero),
+            lastEnforcementSimulation,
+            GetRecentOperationalEvents(),
+            GetDetectionModuleHealthSnapshots());
+    }
+
+    public void ConfigureDetectionModule(string detectorId, bool enabled, string mode)
+    {
+        _detectionModules.AddOrUpdate(
+            detectorId,
+            _ => new DetectionModuleHealthSnapshot(
+                detectorId, enabled, mode, enabled ? "not-run" : "disabled", 0, 0, null, null, null,
+                new Dictionary<string, long>(StringComparer.Ordinal)),
+            (_, current) => current with
+            {
+                Enabled = enabled,
+                Mode = mode,
+                Status = enabled && current.EvaluationCount == 0 ? "not-run" : enabled ? current.Status : "disabled"
+            });
+    }
+
+    public void RecordDetectionModuleEvaluation(
+        string detectorId,
+        bool enabled,
+        string mode,
+        TimeSpan duration,
+        IReadOnlyList<string> signalKeys,
+        string? failureType)
+    {
+        var elapsedMilliseconds = Math.Max(0, duration.TotalMilliseconds);
+        var tags = new TagList { { "detector", detectorId } };
+        _detectionModuleEvaluations.Add(1, tags);
+        _detectionModuleProcessingDuration.Record(elapsedMilliseconds, tags);
+        if (failureType is not null) _detectionModuleFailures.Add(1, tags);
+        foreach (var signalKey in signalKeys.Distinct(StringComparer.Ordinal))
+        {
+            _detectionModuleSignals.Add(1, new TagList { { "detector", detectorId }, { "signal", signalKey } });
+        }
+
+        var evaluatedAt = DateTimeOffset.UtcNow;
+        _detectionModules.AddOrUpdate(
+            detectorId,
+            _ => CreateEvaluatedModuleHealth(detectorId, enabled, mode, elapsedMilliseconds, evaluatedAt, signalKeys, failureType),
+            (_, current) =>
+            {
+                var signalCounts = new Dictionary<string, long>(current.SignalCounts, StringComparer.Ordinal);
+                foreach (var signalKey in signalKeys.Distinct(StringComparer.Ordinal))
+                {
+                    signalCounts[signalKey] = signalCounts.GetValueOrDefault(signalKey) + 1;
+                }
+
+                return current with
+                {
+                    Enabled = enabled,
+                    Mode = mode,
+                    Status = failureType is null ? "healthy" : "degraded",
+                    EvaluationCount = current.EvaluationCount + 1,
+                    FailureCount = current.FailureCount + (failureType is null ? 0 : 1),
+                    LastEvaluatedAtUtc = evaluatedAt,
+                    LastProcessingMilliseconds = elapsedMilliseconds,
+                    LastFailureType = failureType,
+                    SignalCounts = signalCounts
+                };
+            });
+    }
+
+    private static DetectionModuleHealthSnapshot CreateEvaluatedModuleHealth(
+        string detectorId,
+        bool enabled,
+        string mode,
+        double elapsedMilliseconds,
+        DateTimeOffset evaluatedAt,
+        IReadOnlyList<string> signalKeys,
+        string? failureType)
+        => new(
+            detectorId,
+            enabled,
+            mode,
+            failureType is null ? "healthy" : "degraded",
+            1,
+            failureType is null ? 0 : 1,
+            evaluatedAt,
+            elapsedMilliseconds,
+            failureType,
+            signalKeys.Distinct(StringComparer.Ordinal)
+                .ToDictionary(static signalKey => signalKey, static _ => 1L, StringComparer.Ordinal));
+
+    private IReadOnlyList<DetectionModuleHealthSnapshot> GetDetectionModuleHealthSnapshots()
+        => _detectionModules.Values.OrderBy(static module => module.Id, StringComparer.Ordinal).ToArray();
+
+    public void SetQueueCapacity(int capacity)
+        => Interlocked.Exchange(ref _queueCapacity, Math.Max(0, capacity));
+
+    public void SetEtwSubscriptionState(EtwSubscriptionState state)
+    {
+        Interlocked.Exchange(ref _etwSubscriptionState, (long)state);
+        Interlocked.Exchange(ref _etwSubscriptionChangedAtTicks, DateTimeOffset.UtcNow.UtcDateTime.Ticks);
+    }
+
+    public void RecordDetectionAnalyzed(SecurityEvent webEvent)
+    {
+        Interlocked.Increment(ref _detectionEventsAnalyzedCount);
+        _detectionEventsAnalyzed.Add(1);
+        var indicatorCount = webEvent.RiskIndicators?.Distinct(StringComparer.Ordinal).Count() ?? 0;
+        Interlocked.Add(ref _detectionIndicatorsCount, indicatorCount);
+        if (indicatorCount > 0) _detectionIndicators.Add(indicatorCount);
+        _detectionIndicatorCount.Record(indicatorCount);
+
+        var score = Math.Max(0, webEvent.RiskScore);
+        _detectionRiskScore.Record(score);
+        Interlocked.Add(ref _detectionRiskScoreSum, score);
+        for (var index = 0; index < RiskScoreBucketBounds.Length; index++)
+        {
+            if (score <= RiskScoreBucketBounds[index]) Interlocked.Increment(ref _riskScoreBucketCounts[index]);
+        }
+
+        for (var index = 0; index < DetectionIndicatorBucketBounds.Length; index++)
+        {
+            if (indicatorCount <= DetectionIndicatorBucketBounds[index]) Interlocked.Increment(ref _detectionIndicatorBucketCounts[index]);
+        }
+
+        var severity = GetSeverityIndex(webEvent.RiskSeverity);
+        Interlocked.Increment(ref _detectionSeverityCounts[severity]);
+        _detectionEventsBySeverity.Add(1, new KeyValuePair<string, object?>("severity", SeverityNames[severity]));
+    }
+
+    public void RecordEventStreamStarted()
+    {
+        Interlocked.Increment(ref _eventStreamActiveClientCount);
+        Interlocked.Increment(ref _eventStreamConnectionCount);
+        _eventStreamConnections.Add(1);
+    }
+
+    public void RecordEventStreamEnded()
+    {
+        var remaining = Interlocked.Decrement(ref _eventStreamActiveClientCount);
+        if (remaining < 0) Interlocked.Exchange(ref _eventStreamActiveClientCount, 0);
+    }
+
+    public void RecordEventStreamFailure()
+    {
+        Interlocked.Increment(ref _eventStreamFailureCount);
+        _eventStreamFailures.Add(1);
+    }
+
+    public void RecordEventRetentionRun(int? prunedCount)
+    {
+        Interlocked.Increment(ref _eventRetentionRunCount);
+        Interlocked.Exchange(ref _lastRetentionAtTicks, DateTimeOffset.UtcNow.UtcDateTime.Ticks);
+        _eventRetentionRuns.Add(1);
+        if (prunedCount is null)
+        {
+            Interlocked.Increment(ref _eventRetentionFailureCount);
+            _eventRetentionFailures.Add(1);
+            return;
+        }
+
+        if (prunedCount > 0)
+        {
+            Interlocked.Add(ref _eventRetentionPrunedCount, prunedCount.Value);
+            _eventRetentionEventsPruned.Add(prunedCount.Value);
+        }
+    }
+
+    public void RecordIisEnforcementOutcome(string outcome, bool simulation)
+    {
+        var safeOutcome = outcome switch
+        {
+            "succeeded" or "failed" or "simulated" or "observed" or "recovery-required" or
+            "expired" or "expired-already-removed" or "simulated-expiry" or "skipped-allow-list" or
+            "no-matching-sites" or "no-target-domains" or "already-managed" or "pre-existing-unmanaged" or
+            "existing-allow-rule" or "not-found" or "already-removed" or "skipped-not-service-owned" or
+            "skipped-concurrent-change" or "reverted" => outcome,
+            _ => "other"
+        };
+        lock (_recentEventsSync)
+        {
+            _lastEnforcementOutcome = safeOutcome;
+            _lastEnforcementSimulation = simulation;
+            Interlocked.Exchange(ref _lastEnforcementAtTicks, DateTimeOffset.UtcNow.UtcDateTime.Ticks);
+        }
+
+        if (safeOutcome is "failed" or "recovery-required")
+        {
+            Interlocked.Increment(ref _iisAdministrationFailureCount);
+            _iisAdministrationFailures.Add(1);
+        }
+    }
+
+    public void RecordExpiryCleanupCandidate()
+    {
+        Interlocked.Increment(ref _expiryCleanupCandidateCount);
+        _expiryCleanupCandidates.Add(1);
+    }
+
+    public void RecordExpiryCleanupSucceeded()
+    {
+        Interlocked.Increment(ref _expiryCleanupSucceededCount);
+        _expiryCleanupSucceeded.Add(1);
+    }
+
+    public void RecordExpiryCleanupSimulated()
+    {
+        Interlocked.Increment(ref _expiryCleanupSimulatedCount);
+        _expiryCleanupSimulated.Add(1);
+    }
+
+    public void RecordExpiryCleanupFailure()
+    {
+        Interlocked.Increment(ref _expiryCleanupFailureCount);
+        _expiryCleanupFailed.Add(1);
+    }
+
+    public void RecordRecoveryAttempt(string component, string failureType = "unknown")
+    {
+        Interlocked.Increment(ref _recoveryAttemptCount);
+        _recoveryAttempts.Add(1);
+        AddRecentOperationalEvent(component, "recovery", failureType);
+    }
+
+    public void RecordFatalError(string component, string failureType = "unknown")
+    {
+        Interlocked.Increment(ref _fatalErrorCount);
+        _fatalErrors.Add(1);
+        AddRecentOperationalEvent(component, "fatal", failureType);
+    }
+
+    private RecentOperationalEvent[] GetRecentOperationalEvents()
+    {
+        lock (_recentEventsSync)
+        {
+            return _recentOperationalEvents.ToArray();
+        }
+    }
+
+    private void AddRecentOperationalEvent(string component, string kind, string failureType)
+    {
+        var safeComponent = component switch
+        {
+            "etw" or "sqlite" or "iis" or "retention" or "expiry" or "event-stream" or "runtime" => component,
+            _ => "other"
+        };
+        var safeFailureType = string.IsNullOrWhiteSpace(failureType) || failureType.Length > 64 ||
+                              failureType.Any(character => !char.IsAsciiLetterOrDigit(character))
+            ? "unknown"
+            : failureType;
+        lock (_recentEventsSync)
+        {
+            _recentOperationalEvents.Enqueue(new RecentOperationalEvent(
+                DateTimeOffset.UtcNow,
+                safeComponent,
+                kind,
+                safeFailureType));
+            while (_recentOperationalEvents.Count > 20) _recentOperationalEvents.Dequeue();
+        }
+    }
+
+    private static int GetSeverityIndex(string? severity)
+        => severity?.ToLowerInvariant() switch
+        {
+            "low" => 0,
+            "medium" => 1,
+            "high" => 2,
+            "critical" => 3,
+            _ => 4
+        };
+
+    private IReadOnlyDictionary<string, long> GetDetectionSeverityCounts()
+    {
+        var counts = new Dictionary<string, long>(SeverityNames.Length, StringComparer.Ordinal);
+        for (var index = 0; index < SeverityNames.Length; index++)
+        {
+            counts[SeverityNames[index]] = Interlocked.Read(ref _detectionSeverityCounts[index]);
+        }
+
+        return counts;
+    }
 
     public IngestionDiagnosticsSnapshot GetIngestionDiagnosticsSnapshot()
         => new(
@@ -398,16 +822,72 @@ public sealed class IisObservability : IDisposable
         AppendCounter(output, "detection_events_out_of_order", "Events skipped because they exceeded the allowed lateness.", Interlocked.Read(ref _outOfOrderDetectionEventCount));
         AppendCounter(output, "detection_clock_resets", "In-memory detector windows reset after a system clock rollback.", Interlocked.Read(ref _detectionClockResetCount));
         AppendCounter(output, "detection_extension_cache_capacity_rejections", "Site extension-cache admission or learning rejected at configured capacity.", Interlocked.Read(ref _extensionCacheCapacityRejectionCount));
+        AppendCounter(output, "detection_events_analyzed", "Events successfully analyzed by the detector.", Interlocked.Read(ref _detectionEventsAnalyzedCount));
+        AppendCounter(output, "detection_indicators", "Risk indicators produced by detector analysis.", Interlocked.Read(ref _detectionIndicatorsCount));
+        AppendCounter(output, "event_stream_connections", "Event stream clients connected.", Interlocked.Read(ref _eventStreamConnectionCount));
+        AppendCounter(output, "event_stream_failures", "Event stream failures.", Interlocked.Read(ref _eventStreamFailureCount));
+        AppendCounter(output, "event_retention_runs", "Event retention runs completed.", Interlocked.Read(ref _eventRetentionRunCount));
+        AppendCounter(output, "event_retention_events_pruned", "Events deleted by retention.", Interlocked.Read(ref _eventRetentionPrunedCount));
+        AppendCounter(output, "event_retention_failures", "Event retention runs that failed.", Interlocked.Read(ref _eventRetentionFailureCount));
+        AppendCounter(output, "iis_administration_failures", "IIS administration operations that failed.", Interlocked.Read(ref _iisAdministrationFailureCount));
+        AppendCounter(output, "iis_expiry_cleanup_candidates", "Expired deny-list entries considered by cleanup.", Interlocked.Read(ref _expiryCleanupCandidateCount));
+        AppendCounter(output, "iis_expiry_cleanup_succeeded", "Expired deny-list entries removed successfully.", Interlocked.Read(ref _expiryCleanupSucceededCount));
+        AppendCounter(output, "iis_expiry_cleanup_simulated", "Expired deny-list entries simulated without IIS changes.", Interlocked.Read(ref _expiryCleanupSimulatedCount));
+        AppendCounter(output, "iis_expiry_cleanup_failed", "Expired deny-list entries that could not be removed.", Interlocked.Read(ref _expiryCleanupFailureCount));
+        AppendCounter(output, "recovery_attempts", "Background recovery attempts.", Interlocked.Read(ref _recoveryAttemptCount));
+        AppendCounter(output, "fatal_errors", "Fatal background or process errors recorded.", Interlocked.Read(ref _fatalErrorCount));
+
+        output.AppendLine("# HELP detection_events_by_severity Analyzed events by fixed risk severity.");
+        output.AppendLine("# TYPE detection_events_by_severity counter");
+        for (var index = 0; index < SeverityNames.Length; index++)
+        {
+            output.Append("detection_events_by_severity{severity=\"")
+                .Append(SeverityNames[index])
+                .Append("\"} ")
+                .AppendLine(Interlocked.Read(ref _detectionSeverityCounts[index]).ToString(CultureInfo.InvariantCulture));
+        }
+
+            AppendDetectionModuleMetrics(output, GetDetectionModuleHealthSnapshots());
 
         output.AppendLine("# HELP queue_depth Current ETW ingestion queue depth.");
         output.AppendLine("# TYPE queue_depth gauge");
         output.Append("queue_depth ").AppendLine(QueueDepth.ToString(CultureInfo.InvariantCulture));
+        AppendGauge(output, "queue_capacity", "Configured ETW ingestion queue capacity.", QueueCapacity);
         AppendGauge(output, "queue_high_water_mark", "Maximum ETW ingestion queue depth in this process.", QueueHighWaterMark);
+        AppendGauge(output, "event_stream_active_clients", "Current active event stream clients.", ActiveEventStreamClients);
+
+        output.AppendLine("# HELP etw_subscription_state Current ETW subscription lifecycle state.");
+        output.AppendLine("# TYPE etw_subscription_state gauge");
+        foreach (var state in Enum.GetValues<EtwSubscriptionState>())
+        {
+            var stateValue = EtwSubscriptionState == state ? 1 : 0;
+            output.Append("etw_subscription_state{state=\"")
+                .Append(state.ToString().ToLowerInvariant())
+                .Append("\"} ")
+                .AppendLine(stateValue.ToString(CultureInfo.InvariantCulture));
+        }
 
         AppendGauge(output, "detection_client_histories", "Current in-memory detector client/site histories.", Interlocked.Read(ref _trackedDetectionHistories));
         AppendGauge(output, "detection_history_buckets", "Current in-memory detector event-time buckets.", Interlocked.Read(ref _trackedHistoryBuckets));
         AppendGauge(output, "detection_extension_sites", "Current in-memory detector site extension caches.", Interlocked.Read(ref _trackedExtensionSites));
         AppendGauge(output, "detection_path_tokens", "Current hashed unique paths retained by detector windows.", Interlocked.Read(ref _trackedPathTokens));
+
+        AppendHistogram(
+            output,
+            "detection_risk_score",
+            "Risk score distribution for analyzed events.",
+            RiskScoreBucketBounds,
+            _riskScoreBucketCounts,
+            Interlocked.Read(ref _detectionEventsAnalyzedCount),
+            Interlocked.Read(ref _detectionRiskScoreSum));
+        AppendHistogram(
+            output,
+            "detection_indicator_count",
+            "Indicator count distribution per analyzed event.",
+            DetectionIndicatorBucketBounds,
+            _detectionIndicatorBucketCounts,
+            Interlocked.Read(ref _detectionEventsAnalyzedCount),
+            Interlocked.Read(ref _detectionIndicatorsCount));
 
         output.AppendLine("# HELP last_event_timestamp_seconds Unix timestamp of the last successfully processed event.");
         output.AppendLine("# TYPE last_event_timestamp_seconds gauge");
@@ -448,6 +928,48 @@ public sealed class IisObservability : IDisposable
         return output.ToString();
     }
 
+    private static void AppendDetectionModuleMetrics(
+        StringBuilder output,
+        IReadOnlyList<DetectionModuleHealthSnapshot> modules)
+    {
+        output.AppendLine("# HELP detection_module_enabled Whether a detector module is enabled.");
+        output.AppendLine("# TYPE detection_module_enabled gauge");
+        output.AppendLine("# HELP detection_module_healthy Whether the last detector module evaluation succeeded.");
+        output.AppendLine("# TYPE detection_module_healthy gauge");
+        output.AppendLine("# HELP detection_module_evaluations_total Events evaluated by a detector module.");
+        output.AppendLine("# TYPE detection_module_evaluations_total counter");
+        output.AppendLine("# HELP detection_module_failures_total Detector module evaluations that failed.");
+        output.AppendLine("# TYPE detection_module_failures_total counter");
+        output.AppendLine("# HELP detection_module_processing_duration_milliseconds_last Duration of the last detector module evaluation.");
+        output.AppendLine("# TYPE detection_module_processing_duration_milliseconds_last gauge");
+        output.AppendLine("# HELP detection_module_signal_observations_total Signals returned by detector modules, including observation-only signals.");
+        output.AppendLine("# TYPE detection_module_signal_observations_total counter");
+
+        foreach (var module in modules)
+        {
+            var detectorLabel = $"detector=\"{module.Id}\"";
+            output.Append("detection_module_enabled{").Append(detectorLabel).Append("} ")
+                .AppendLine(module.Enabled ? "1" : "0");
+            output.Append("detection_module_healthy{").Append(detectorLabel).Append("} ")
+                .AppendLine(module.Status == "healthy" ? "1" : "0");
+            output.Append("detection_module_evaluations_total{").Append(detectorLabel).Append("} ")
+                .AppendLine(module.EvaluationCount.ToString(CultureInfo.InvariantCulture));
+            output.Append("detection_module_failures_total{").Append(detectorLabel).Append("} ")
+                .AppendLine(module.FailureCount.ToString(CultureInfo.InvariantCulture));
+            output.Append("detection_module_processing_duration_milliseconds_last{").Append(detectorLabel).Append("} ")
+                .AppendLine((module.LastProcessingMilliseconds ?? 0).ToString("0.######", CultureInfo.InvariantCulture));
+            foreach (var signal in module.SignalCounts.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+            {
+                output.Append("detection_module_signal_observations_total{detector=\"")
+                    .Append(module.Id)
+                    .Append("\",signal=\"")
+                    .Append(signal.Key)
+                    .Append("\"} ")
+                    .AppendLine(signal.Value.ToString(CultureInfo.InvariantCulture));
+            }
+        }
+    }
+
     public void Dispose() => _meter.Dispose();
 
     private static void AppendCounter(StringBuilder output, string name, string description, long value)
@@ -462,6 +984,40 @@ public sealed class IisObservability : IDisposable
         output.Append("# HELP ").Append(name).Append(' ').AppendLine(description);
         output.Append("# TYPE ").Append(name).AppendLine(" gauge");
         output.Append(name).Append(' ').AppendLine(value.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private static void AppendHistogram(
+        StringBuilder output,
+        string name,
+        string description,
+        IReadOnlyList<double> bounds,
+        long[] bucketCounts,
+        long count,
+        long sum)
+    {
+        output.Append("# HELP ").Append(name).Append(' ').AppendLine(description);
+        output.Append("# TYPE ").Append(name).AppendLine(" histogram");
+        for (var index = 0; index < bounds.Count; index++)
+        {
+            output.Append(name).Append("_bucket{le=\"")
+                .Append(bounds[index].ToString("0.###", CultureInfo.InvariantCulture))
+                .Append("\"} ")
+                .AppendLine(Interlocked.Read(ref bucketCounts[index]).ToString(CultureInfo.InvariantCulture));
+        }
+
+        output.Append(name).Append("_bucket{le=\"+Inf\"} ").AppendLine(count.ToString(CultureInfo.InvariantCulture));
+        output.Append(name).Append("_sum ").AppendLine(sum.ToString(CultureInfo.InvariantCulture));
+        output.Append(name).Append("_count ").AppendLine(count.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private IEnumerable<Measurement<long>> GetEtwSubscriptionStateMeasurements()
+    {
+        var currentState = EtwSubscriptionState;
+        return Enum.GetValues<EtwSubscriptionState>()
+            .Select(state => new Measurement<long>(
+                currentState == state ? 1 : 0,
+                new KeyValuePair<string, object?>("state", state.ToString().ToLowerInvariant())))
+            .ToArray();
     }
 
     private static void UpdateMaximum(ref long target, long value)

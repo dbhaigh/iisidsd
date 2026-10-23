@@ -67,6 +67,9 @@ jobs:
           if (-not (Test-Path (Join-Path $publishDir 'wwwroot'))) { throw 'Dashboard assets were not published.' }
           if (Test-Path (Join-Path $publishDir 'appsettings.Development.json')) { throw 'Development settings must not be published.' }
           if (Test-Path (Join-Path $publishDir 'data\iisidsd.sqlite3')) { throw 'A local database must not be published.' }
+          $releaseDir = Join-Path $env:RUNNER_TEMP 'iisidsd-release'
+          $release = ./eng/Package-Standalone.ps1 -PublishDirectory $publishDir -OutputDirectory $releaseDir
+          ./eng/Test-StandaloneUpgrade.ps1 -PackageDirectory $release.ExpandedDirectory
 
       - name: Download and verify Gitleaks
         shell: pwsh
@@ -89,7 +92,7 @@ jobs:
           & $env:GITLEAKS_EXE git --redact --report-format sarif --report-path $report .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Upload test, secret-scan, and publish artifacts
+      - name: Upload test, secret-scan, and release artifacts
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
@@ -98,6 +101,7 @@ jobs:
             ${{ runner.temp }}\test-results\
             ${{ runner.temp }}\detection-evaluation.json
             ${{ runner.temp }}\gitleaks.sarif
-            ${{ runner.temp }}\iisidsd-publish\
+            ${{ runner.temp }}\iisidsd-release\*.zip
+            ${{ runner.temp }}\iisidsd-release\*.sha256
           if-no-files-found: ignore
           retention-days: 14

@@ -1,5 +1,6 @@
 using iisidsd.Configuration;
 using iisidsd.Models;
+using iisidsd.Observability;
 using iisidsd.Storage;
 using Microsoft.Extensions.Options;
 
@@ -9,7 +10,8 @@ public sealed class TemporaryDenyListCleaner(
     IDenyListStore denyListStore,
     IIisDenyListService denyListService,
     IOptions<IisAdminOptions> adminOptions,
-    ILogger<TemporaryDenyListCleaner> logger) : BackgroundService
+    ILogger<TemporaryDenyListCleaner> logger,
+    IisObservability observability) : BackgroundService
 {
     private readonly HashSet<TemporaryDenyListEntry> _dryRunActionsLogged = [];
 
@@ -37,6 +39,7 @@ public sealed class TemporaryDenyListCleaner(
 
                     foreach (var entry in expiredEntries)
                     {
+                        observability.RecordExpiryCleanupCandidate();
                         if (policy.IsSimulation)
                         {
                             if (_dryRunActionsLogged.Add(entry))
@@ -50,10 +53,7 @@ public sealed class TemporaryDenyListCleaner(
                         }
                         else if (!denyListService.RemoveExpiredDeniedIp(entry))
                         {
-                            logger.LogWarning(
-                                "Failed to remove expired deny-list entry for client IP {ClientIp} on site {SiteName}.",
-                                entry.ClientIp,
-                                entry.SiteName);
+                            logger.LogWarning("Expired deny-list cleanup did not complete.");
                         }
 
                         after = entry;

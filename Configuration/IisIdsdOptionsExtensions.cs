@@ -1,4 +1,5 @@
 using iisidsd.Iis;
+using iisidsd.Detection;
 using iisidsd.Models;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -35,6 +36,19 @@ public static class IisIdsdOptionsExtensions
         services.AddOptions<DetectionOptions>()
             .Bind(configuration.GetSection(DetectionOptions.SectionName))
             .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddOptions<DetectionModulesOptions>()
+            .Bind(configuration.GetSection(DetectionModulesOptions.SectionName))
+            .Validate(options => options.IsValid(),
+                "DetectionModules must contain at most 32 valid lowercase module ids with valid mode values.")
+            .ValidateOnStart();
+
+        services.AddOptions<NotificationOptions>()
+            .Bind(configuration.GetSection(NotificationOptions.SectionName))
+            .ValidateDataAnnotations()
+            .Validate(options => options.IsValid(),
+                "Notifications must use a supported provider, valid severity, bounded retry settings, and a loopback dashboard URL.")
             .ValidateOnStart();
 
         services.AddOptions<TrayOptions>()

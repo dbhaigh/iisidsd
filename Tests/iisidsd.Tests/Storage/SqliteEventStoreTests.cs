@@ -62,7 +62,20 @@ public sealed class SqliteEventStoreTests : IDisposable
             new Dictionary<string, string>(),
             RiskScore: 10,
             RiskSeverity: "Low",
-            RiskIndicators: ["test-indicator"])
+            RiskIndicators: ["test-indicator"],
+            DetectionEvidence:
+            [
+                new DetectionEvidence(
+                    DetectionSignalCode.Custom,
+                    DetectionEvidenceFamily.PathContent,
+                    "test-indicator",
+                    10,
+                    10,
+                    true,
+                    DetectorId: "test-module",
+                    SignalKey: "test.signal",
+                    Explanation: "A structured test explanation")
+            ])
         {
             Id = "second"
         });
@@ -72,6 +85,12 @@ public sealed class SqliteEventStoreTests : IDisposable
         Assert.Equal("second", webEvent.Id);
         Assert.Equal("/second", webEvent.Path);
         Assert.Contains("test-indicator", webEvent.RiskIndicators ?? []);
+        var evidence = Assert.Single(webEvent.DetectionEvidence ?? []);
+        Assert.Equal("test-module", evidence.DetectorId);
+        Assert.Equal("A structured test explanation", evidence.Explanation);
+        var storedEvent = Assert.Single(store.GetLatestPage(10).Items);
+        Assert.Equal(evidence, Assert.Single(storedEvent.DetectionEvidence ?? []));
+        Assert.Equal(evidence, storedEvent.ToSecurityEvent().DetectionEvidence?.Single());
 
         var finding = Assert.IsType<IpFinding>(findingStore.Get("203.0.113.10"));
         Assert.Equal(2, finding.RequestCount);
@@ -416,7 +435,7 @@ public sealed class SqliteEventStoreTests : IDisposable
             """;
         using var reader = command.ExecuteReader();
         Assert.True(reader.Read());
-        Assert.Equal(3, reader.GetInt32(0));
+        Assert.Equal(5, reader.GetInt32(0));
         Assert.Equal("wal", reader.GetString(1));
         Assert.Equal(string.Empty, reader.GetString(2));
         Assert.Equal(7, reader.GetInt32(3));

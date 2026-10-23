@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using iisidsd.Configuration;
+using iisidsd.Observability;
 using Microsoft.Extensions.Options;
 
 namespace iisidsd.Storage;
@@ -7,7 +8,8 @@ namespace iisidsd.Storage;
 public sealed class EventPrunerService(
     IEventRetentionStore eventStore,
     IOptions<StorageOptions> storageOptions,
-    ILogger<EventPrunerService> logger) : BackgroundService
+    ILogger<EventPrunerService> logger,
+    IisObservability? observability = null) : BackgroundService
 {
     private readonly int _retentionDays = storageOptions.Value.EventRetentionDays;
 
@@ -17,6 +19,7 @@ public sealed class EventPrunerService(
         do
         {
             var prunedCount = await PruneWithRetryAsync(stoppingToken);
+            observability?.RecordEventRetentionRun(prunedCount);
             if (prunedCount is > 0)
             {
                 logger.LogInformation("Pruned {EventCount} events older than {RetentionDays} days.", prunedCount, _retentionDays);
@@ -41,6 +44,7 @@ public sealed class EventPrunerService(
                     return null;
                 }
 
+                observability?.RecordRecoveryAttempt("retention", "sqlite-busy");
                 logger.LogWarning(exception, "SQLite was temporarily busy while pruning events; retrying attempt {Attempt}.", attempt + 1);
                 await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt), cancellationToken);
             }

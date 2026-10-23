@@ -123,7 +123,8 @@ public sealed class SqliteFindingStore(
                             detection_reason,
                             risk_score,
                             risk_severity,
-                            risk_indicators_json
+                            risk_indicators_json,
+                            detection_evidence_json
                         FROM events
                         WHERE sequence_id > $afterSequenceId
                         ORDER BY sequence_id

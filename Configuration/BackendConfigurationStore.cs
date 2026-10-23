@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -16,12 +17,15 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
         "Logging",
         "IisEtw",
         "Detection",
+        "Notifications",
         "Storage",
         "IisAdmin",
         "Dashboard",
         "Tray",
         "OpenTelemetry"
     ];
+
+    private static readonly byte[] RevisionKey = RandomNumberGenerator.GetBytes(32);
 
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -41,13 +45,21 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
 
     public async Task<JsonElement> GetSettingsAsync(CancellationToken cancellationToken)
     {
-        var root = await ReadSettingsFileAsync(cancellationToken);
+        return (await GetConfigurationSnapshotAsync(cancellationToken)).Settings;
+    }
+
+    public async Task<BackendConfigurationSnapshot> GetConfigurationSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var contents = await File.ReadAllTextAsync(_settingsPath, cancellationToken);
+        var root = JsonNode.Parse(contents) as JsonObject
+            ?? throw new InvalidDataException("The appsettings.json root must be a JSON object.");
         var settings = new EditableBackendConfiguration
         {
             Urls = ReadRootValue(root, "Urls", "http://127.0.0.1:5080"),
             Logging = ReadSection(root, "Logging", new LoggingSettings()),
             IisEtw = ReadSection(root, "IisEtw", new IisEtwOptions()),
             Detection = ReadSection(root, "Detection", new DetectionOptions()),
+            Notifications = ReadSection(root, NotificationOptions.SectionName, new NotificationOptions()),
             Storage = ReadSection(root, "Storage", new StorageOptions()),
             IisAdmin = ReadSection(root, "IisAdmin", new IisAdminOptions()),
             Dashboard = ReadSection(root, DashboardOptions.SectionName, new DashboardOptions()),
@@ -64,11 +76,22 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
             }
         };
 
-        return JsonSerializer.SerializeToElement(settings, SerializerOptions);
+        return new BackendConfigurationSnapshot(
+            JsonSerializer.SerializeToElement(settings, SerializerOptions),
+            ComputeRevision(contents));
     }
 
     public async Task<BackendConfigurationSaveResult> SaveSettingsAsync(
         JsonElement settings,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = await GetConfigurationSnapshotAsync(cancellationToken);
+        return await SaveSettingsAsync(settings, snapshot.Revision, cancellationToken);
+    }
+
+    public async Task<BackendConfigurationSaveResult> SaveSettingsAsync(
+        JsonElement settings,
+        string expectedRevision,
         CancellationToken cancellationToken)
     {
         var errors = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
@@ -105,7 +128,19 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
         await _writeLock.WaitAsync(cancellationToken);
         try
         {
-            var currentSettings = await GetSettingsAsync(cancellationToken);
+            var currentSnapshot = await GetConfigurationSnapshotAsync(cancellationToken);
+            if (!CryptographicOperations.FixedTimeEquals(
+                    Convert.FromHexString(expectedRevision),
+                    Convert.FromHexString(currentSnapshot.Revision)))
+            {
+                return new BackendConfigurationSaveResult(
+                    false,
+                    new Dictionary<string, string[]>(),
+                    CurrentRevision: currentSnapshot.Revision,
+                    Conflict: true);
+            }
+
+            var currentSettings = currentSnapshot.Settings;
             var mergedSettings = JsonNode.Parse(currentSettings.GetRawText()) as JsonObject
                 ?? throw new InvalidDataException("Unable to load the editable backend settings.");
             var patch = JsonNode.Parse(settings.GetRawText()) as JsonObject
@@ -128,6 +163,7 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
                 configuration.Logging?.LogLevel is null ||
                 configuration.IisEtw is null ||
                 configuration.Detection is null ||
+                configuration.Notifications is null ||
                 configuration.Storage is null ||
                 configuration.IisAdmin is null ||
                 configuration.Dashboard is null ||
@@ -173,7 +209,9 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
                 ?? throw new InvalidDataException("Unable to serialize backend settings.");
             MergeObjects(root, replacement);
 
-            var temporaryPath = $"{_settingsPath}.{Guid.NewGuid():N}.tmp";
+            var temporaryDirectory = Path.Combine(Path.GetDirectoryName(_settingsPath)!, "data");
+            Directory.CreateDirectory(temporaryDirectory);
+            var temporaryPath = Path.Combine(temporaryDirectory, $"appsettings.{Guid.NewGuid():N}.tmp");
             try
             {
                 var serialized = root.ToJsonString(SerializerOptions);
@@ -193,8 +231,12 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
             _writeLock.Release();
         }
 
-        return new BackendConfigurationSaveResult(true, new Dictionary<string, string[]>());
+        var savedSnapshot = await GetConfigurationSnapshotAsync(cancellationToken);
+        return new BackendConfigurationSaveResult(true, new Dictionary<string, string[]>(), savedSnapshot.Revision);
     }
+
+    private static string ComputeRevision(string contents)
+        => Convert.ToHexString(HMACSHA256.HashData(RevisionKey, Encoding.UTF8.GetBytes(contents)))[..24].ToLowerInvariant();
 
     private async Task<JsonObject> ReadSettingsFileAsync(CancellationToken cancellationToken)
     {
@@ -239,6 +281,7 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
     {
         ValidateDataAnnotations(configuration.IisEtw, "settings.IisEtw", errors);
         ValidateDataAnnotations(configuration.Detection, "settings.Detection", errors);
+        ValidateDataAnnotations(configuration.Notifications, "settings.Notifications", errors);
         ValidateDataAnnotations(configuration.Storage, "settings.Storage", errors);
         ValidateDataAnnotations(configuration.IisAdmin, "settings.IisAdmin", errors);
         ValidateDataAnnotations(configuration.Dashboard, "settings.Dashboard", errors);
@@ -256,6 +299,11 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
         if (configuration.IisEtw.ProviderId == Guid.Empty)
         {
             AddError(errors, "settings.IisEtw.ProviderId", "ProviderId must not be empty.");
+        }
+
+        if (!configuration.Notifications.IsValid())
+        {
+            AddError(errors, "settings.Notifications", "Provider, severity, retry settings, and local dashboard URL must be valid; delivery requires an explicit provider.");
         }
 
         if (configuration.IisAdmin.AllowList is null ||
@@ -403,6 +451,7 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
         public LoggingSettings Logging { get; init; } = new();
         public IisEtwOptions IisEtw { get; init; } = new();
         public DetectionOptions Detection { get; init; } = new();
+        public NotificationOptions Notifications { get; init; } = new();
         public StorageOptions Storage { get; init; } = new();
         public IisAdminOptions IisAdmin { get; init; } = new();
         public DashboardOptions Dashboard { get; init; } = new();

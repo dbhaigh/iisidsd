@@ -34,6 +34,7 @@
   </nav>
 
   <section class="system-health" id="system-health" aria-label="System health">
+    <span class="health-indicator" id="service-health" data-state="checking">Service readiness: checking</span>
     <span class="health-indicator" id="database-health" data-state="checking">Database health: checking</span>
     <span class="health-indicator" id="ingestion-health" data-state="checking">Ingestion health: checking</span>
     <span class="health-indicator" id="data-freshness" data-state="checking">Data freshness: checking</span>
@@ -42,6 +43,7 @@
   <nav class="view-tabs" role="tablist" aria-label="Dashboard views">
     <button class="tab active" id="tab-events" role="tab" aria-selected="true" aria-controls="events-view" type="button" data-view="events">Live events</button>
     <button class="tab" id="tab-findings" role="tab" aria-selected="false" aria-controls="findings-view" type="button" data-view="findings">Findings</button>
+    <button class="tab" id="tab-notifications" role="tab" aria-selected="false" aria-controls="notifications-view" type="button" data-view="notifications">Notifications</button>
     <button class="tab" id="tab-details" role="tab" aria-selected="false" aria-controls="details-view" type="button" data-view="details">IP details</button>
     <button class="tab" id="tab-iis" role="tab" aria-selected="false" aria-controls="iis-view" type="button" data-view="iis">IIS deny list</button>
     <button class="tab" id="tab-configuration" role="tab" aria-selected="false" aria-controls="configuration-view" type="button" data-view="configuration">System configuration</button>
@@ -155,6 +157,26 @@
       </div>
     </section>
 
+    <section id="notifications-view" class="view panel" role="tabpanel" aria-labelledby="tab-notifications" aria-label="Notification queue" hidden>
+      <div class="panel-heading">
+        <div>
+          <h2>Notification queue</h2>
+          <p>Delivery outcomes are independent of detection and IIS enforcement.</p>
+        </div>
+        <button class="button button-secondary" id="notifications-refresh" type="button">Refresh queue</button>
+      </div>
+      <div class="summary" id="notification-queue-status" role="status" aria-live="polite">Loading notification queue...</div>
+      <div class="table-wrap">
+        <table>
+          <caption class="visually-hidden">Durable security notification incidents and delivery state</caption>
+          <thead>
+            <tr><th>Severity</th><th>Status</th><th>Client</th><th>Target site</th><th>Summary and evidence</th><th>Attempts</th><th>Last seen</th><th>Action</th></tr>
+          </thead>
+          <tbody id="notification-queue"><tr><td colspan="8" class="empty">Loading notifications...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
     <section id="details-view" class="view panel" role="tabpanel" aria-labelledby="tab-details" aria-label="Selected IP details">
       <div class="panel-heading">
         <div>
@@ -169,7 +191,7 @@
       </section>
       <div class="risk-details">
         <div>
-          <h3>Detector interpretation <span class="muted">Heuristic evidence, not a compromise verdict</span></h3>
+          <h3>Detector interpretation <span class="muted">Includes scored and observation-only signals</span></h3>
           <div class="indicator-list" id="finding-risk-indicators"><span class="muted">No finding selected.</span></div>
         </div>
         <div>

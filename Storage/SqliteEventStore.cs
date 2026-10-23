@@ -17,7 +17,9 @@ public sealed class SqliteEventStore(
     IHostEnvironment hostEnvironment,
     IFindingStore findingStore,
     IisObservability observability,
-    IOptions<DashboardOptions>? dashboardOptions = null) : IEventStore, IEventRetentionStore, IReplayableEventStore
+    IOptions<DashboardOptions>? dashboardOptions = null,
+    INotificationQueue? notificationQueue = null,
+    ILogger<SqliteEventStore>? logger = null) : IEventStore, IEventRetentionStore, IReplayableEventStore
 {
     private const int RetentionDeleteBatchSize = 1_000;
     private const int MaximumQueryLimit = 10_000;
@@ -70,7 +72,8 @@ public sealed class SqliteEventStore(
                     detection_reason,
                     risk_score,
                     risk_severity,
-                    risk_indicators_json
+                    risk_indicators_json,
+                    detection_evidence_json
                 FROM events
                 {(predicates.Count == 0 ? "" : "WHERE " + string.Join(" AND ", predicates))}
                 ORDER BY sequence_id DESC
@@ -107,7 +110,8 @@ public sealed class SqliteEventStore(
         command.Parameters.AddWithValue("$limit", limit + 1);
         command.CommandText = $"""
             SELECT sequence_id, event_id, timestamp_utc, server, domain, method, path, client_ip, status_code,
-                   user_agent, properties_json, is_suspicious, detection_reason, risk_score, risk_severity, risk_indicators_json
+                   user_agent, properties_json, is_suspicious, detection_reason, risk_score, risk_severity, risk_indicators_json,
+                   detection_evidence_json
             FROM events
             {(predicates.Count == 0 ? "" : "WHERE " + string.Join(" AND ", predicates))}
             ORDER BY sequence_id DESC
@@ -146,7 +150,8 @@ public sealed class SqliteEventStore(
         command.Parameters.AddWithValue("$limit", limit + 1);
         command.CommandText = $"""
             SELECT sequence_id, event_id, timestamp_utc, server, domain, method, path, client_ip, status_code,
-                   user_agent, properties_json, is_suspicious, detection_reason, risk_score, risk_severity, risk_indicators_json
+                   user_agent, properties_json, is_suspicious, detection_reason, risk_score, risk_severity, risk_indicators_json,
+                   detection_evidence_json
             FROM events
             WHERE {string.Join(" AND ", predicates)}
             ORDER BY sequence_id ASC
@@ -184,7 +189,8 @@ public sealed class SqliteEventStore(
         command.Parameters.AddWithValue("$limit", limit + 1);
         command.CommandText = $"""
             SELECT sequence_id, event_id, timestamp_utc, server, domain, method, path, client_ip, status_code,
-                   user_agent, properties_json, is_suspicious, detection_reason, risk_score, risk_severity, risk_indicators_json
+                   user_agent, properties_json, is_suspicious, detection_reason, risk_score, risk_severity, risk_indicators_json,
+                   detection_evidence_json
             FROM events
             WHERE {string.Join(" AND ", predicates)}
             ORDER BY sequence_id DESC
@@ -242,7 +248,8 @@ public sealed class SqliteEventStore(
                             detection_reason,
                             risk_score,
                             risk_severity,
-                            risk_indicators_json)
+                            risk_indicators_json,
+                            detection_evidence_json)
                         VALUES (
                             $eventId,
                             $timestamp,
@@ -258,7 +265,8 @@ public sealed class SqliteEventStore(
                             $detectionReason,
                             $riskScore,
                             $riskSeverity,
-                            $riskIndicators)
+                            $riskIndicators,
+                            $detectionEvidence)
                         RETURNING sequence_id;
                     """;
                 foreach (var webEvent in webEvents)
@@ -273,6 +281,7 @@ public sealed class SqliteEventStore(
                 }
 
                 findingStore.UpsertBatch(newlyPersistedEvents, connection, transaction);
+                EnqueueNotificationsSafely(newlyPersistedEvents, connection, transaction);
 
                 if (newlyPersistedEvents.Count > 0)
                 {
@@ -495,6 +504,64 @@ public sealed class SqliteEventStore(
         command.Parameters.AddWithValue("$riskScore", webEvent.RiskScore);
         command.Parameters.AddWithValue("$riskSeverity", webEvent.RiskSeverity);
         command.Parameters.AddWithValue("$riskIndicators", JsonSerializer.Serialize(webEvent.RiskIndicators ?? [], SerializerOptions));
+        command.Parameters.AddWithValue("$detectionEvidence", JsonSerializer.Serialize(webEvent.DetectionEvidence ?? [], SerializerOptions));
+    }
+
+    private void EnqueueNotificationsSafely(
+        IReadOnlyList<SecurityEvent> webEvents,
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        if (notificationQueue is null || webEvents.Count == 0)
+        {
+            return;
+        }
+
+        var savepointCreated = false;
+        try
+        {
+            using (var savepoint = connection.CreateCommand())
+            {
+                savepoint.Transaction = transaction;
+                savepoint.CommandText = "SAVEPOINT notification_enqueue;";
+                savepoint.ExecuteNonQuery();
+                savepointCreated = true;
+            }
+
+            foreach (var webEvent in webEvents)
+            {
+                notificationQueue.Enqueue(webEvent, connection, transaction);
+            }
+
+            using var release = connection.CreateCommand();
+            release.Transaction = transaction;
+            release.CommandText = "RELEASE SAVEPOINT notification_enqueue;";
+            release.ExecuteNonQuery();
+            savepointCreated = false;
+        }
+        catch (Exception exception)
+        {
+            if (savepointCreated)
+            {
+                try
+                {
+                    using var rollback = connection.CreateCommand();
+                    rollback.Transaction = transaction;
+                    rollback.CommandText = "ROLLBACK TO SAVEPOINT notification_enqueue; RELEASE SAVEPOINT notification_enqueue;";
+                    rollback.ExecuteNonQuery();
+                }
+                catch (Exception rollbackException)
+                {
+                    logger?.LogError(
+                        "Unable to roll back notification enqueue savepoint. FailureType={FailureType}",
+                        rollbackException.GetType().Name);
+                }
+            }
+
+            logger?.LogWarning(
+                "Notification enqueue failed; event detection and persistence continue. FailureType={FailureType}",
+                exception.GetType().Name);
+        }
     }
 
     public int PruneExpiredEvents(DateTimeOffset olderThan)
@@ -651,7 +718,8 @@ public sealed class SqliteEventStore(
                 webEvent.DetectionReason,
                 webEvent.RiskScore,
                 webEvent.RiskSeverity,
-                webEvent.RiskIndicators ?? []));
+                webEvent.RiskIndicators ?? [],
+                webEvent.DetectionEvidence ?? []));
         }
 
         return events;
@@ -664,6 +732,7 @@ public sealed class SqliteEventStore(
     {
         var properties = JsonSerializer.Deserialize<Dictionary<string, string>>(reader.GetString(9 + sequenceIdColumnOffset), SerializerOptions) ?? [];
         var riskIndicators = JsonSerializer.Deserialize<List<string>>(reader.GetString(14 + sequenceIdColumnOffset), SerializerOptions) ?? [];
+        var detectionEvidence = JsonSerializer.Deserialize<List<DetectionEvidence>>(reader.GetString(15 + sequenceIdColumnOffset), SerializerOptions) ?? [];
         return new SecurityEvent(
             DateTimeOffset.Parse(reader.GetString(1 + sequenceIdColumnOffset), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             reader.GetString(2 + sequenceIdColumnOffset),
@@ -678,7 +747,8 @@ public sealed class SqliteEventStore(
             reader.IsDBNull(11 + sequenceIdColumnOffset) ? null : reader.GetString(11 + sequenceIdColumnOffset),
             reader.GetInt32(12 + sequenceIdColumnOffset),
             reader.GetString(13 + sequenceIdColumnOffset),
-            riskIndicators)
+            riskIndicators,
+            detectionEvidence)
         {
             Id = reader.GetString(sequenceIdColumnOffset)
         };

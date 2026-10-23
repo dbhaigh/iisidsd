@@ -16,7 +16,8 @@ public sealed record StoredSecurityEvent(
     string? DetectionReason,
     int RiskScore,
     string RiskSeverity,
-    IReadOnlyList<string> RiskIndicators)
+    IReadOnlyList<string> RiskIndicators,
+    IReadOnlyList<DetectionEvidence>? DetectionEvidence = null)
 {
     public SecurityEvent ToSecurityEvent()
         => new(
@@ -33,7 +34,8 @@ public sealed record StoredSecurityEvent(
             DetectionReason,
             RiskScore,
             RiskSeverity,
-            RiskIndicators)
+            RiskIndicators,
+            DetectionEvidence ?? [])
         {
             Id = EventId,
             SequenceId = SequenceId

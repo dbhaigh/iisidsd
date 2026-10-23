@@ -77,6 +77,24 @@ public sealed class BackendConfigurationStoreTests : IAsyncLifetime
         Assert.Equal(original, await File.ReadAllTextAsync(Path.Combine(_contentRoot, "appsettings.json")));
     }
 
+      [Fact]
+      public async Task SaveSettingsAsync_RejectsStaleRevisionWithoutOverwritingNewerChanges()
+      {
+        var initial = await _store.GetConfigurationSnapshotAsync(CancellationToken.None);
+        using var firstUpdate = JsonDocument.Parse("""{"Detection":{"RateThreshold":90}}""");
+        using var staleUpdate = JsonDocument.Parse("""{"Detection":{"RateThreshold":120}}""");
+
+        var saved = await _store.SaveSettingsAsync(firstUpdate.RootElement, initial.Revision, CancellationToken.None);
+        var conflict = await _store.SaveSettingsAsync(staleUpdate.RootElement, initial.Revision, CancellationToken.None);
+
+        Assert.True(saved.Saved);
+        Assert.NotEqual(initial.Revision, saved.Revision);
+        Assert.False(conflict.Saved);
+        Assert.True(conflict.Conflict);
+        Assert.Equal(saved.Revision, conflict.CurrentRevision);
+        Assert.Equal(90, JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(_contentRoot, "appsettings.json")))!["Detection"]!["RateThreshold"]!.GetValue<int>());
+      }
+
       [Theory]
       [InlineData("""{"Urls":"https://user:secret@127.0.0.1:5080"}""", "settings.Urls")]
       [InlineData("""{"IisEtw":{"IngestionBufferSize":0}}""", "settings.IisEtw.IngestionBufferSize")]

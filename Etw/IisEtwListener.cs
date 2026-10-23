@@ -32,6 +32,7 @@ public sealed class IisEtwListener(
     {
         if (!_options.Enabled)
         {
+            observability.SetEtwSubscriptionState(EtwSubscriptionState.Disabled);
             logger.LogInformation("IIS ETW ingestion is disabled.");
             await Task.Delay(Timeout.Infinite, stoppingToken);
             return;
@@ -39,48 +40,67 @@ public sealed class IisEtwListener(
 
         if (!OperatingSystem.IsWindows())
         {
+            observability.SetEtwSubscriptionState(EtwSubscriptionState.Unsupported);
             logger.LogError("IIS ETW ingestion requires Windows.");
             await Task.Delay(Timeout.Infinite, stoppingToken);
             return;
         }
 
-        using var session = new TraceEventSession(_options.SessionName);
-        using var source = new ETWTraceEventSource(session.SessionName, TraceEventSourceType.Session);
-        using var registration = stoppingToken.Register(() => source.StopProcessing());
-
-        source.Dynamic.All += OnEvent;
-        session.EnableProvider(_options.ProviderId, TraceEventLevel.Informational);
-        logger.LogInformation("Listening for IIS ETW events from {Provider} ({ProviderId}).", _options.ProviderName, _options.ProviderId);
-        var processingTask = _pipeline.ProcessAsync();
-        Exception? processingFailure = null;
-
+        observability.SetEtwSubscriptionState(EtwSubscriptionState.Starting);
         try
         {
-            await Task.Run(source.Process, stoppingToken);
+            using var session = new TraceEventSession(_options.SessionName);
+            using var source = new ETWTraceEventSource(session.SessionName, TraceEventSourceType.Session);
+            using var registration = stoppingToken.Register(() => source.StopProcessing());
+
+            source.Dynamic.All += OnEvent;
+            session.EnableProvider(_options.ProviderId, TraceEventLevel.Informational);
+            observability.SetEtwSubscriptionState(EtwSubscriptionState.Listening);
+            logger.LogInformation("Listening for IIS ETW events from {Provider} ({ProviderId}).", _options.ProviderName, _options.ProviderId);
+            var processingTask = _pipeline.ProcessAsync();
+            Exception? processingFailure = null;
+
+            try
+            {
+                await Task.Run(source.Process, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+            }
+            catch (Exception exception)
+            {
+                processingFailure = exception;
+            }
+            finally
+            {
+                _pipeline.Complete();
+            }
+
+            logger.LogInformation("ETW reception stopped; draining accepted events.");
+            await processingTask;
+            logger.LogInformation(
+                "ETW ingestion drain completed. AcceptedCount={AcceptedCount} ProcessedCount={ProcessedCount} DroppedCount={DroppedCount} FailureCount={FailureCount}",
+                observability.EtwEventsAccepted,
+                observability.EventsProcessed,
+                observability.EtwEventsDropped,
+                observability.EventProcessingFailures);
+            if (processingFailure is not null)
+            {
+                ExceptionDispatchInfo.Capture(processingFailure).Throw();
+            }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
         }
         catch (Exception exception)
         {
-            processingFailure = exception;
+            observability.SetEtwSubscriptionState(EtwSubscriptionState.Recovering);
+            observability.RecordFatalError("etw", exception.GetType().Name);
+            throw;
         }
         finally
         {
-            _pipeline.Complete();
-        }
-
-        logger.LogInformation("ETW reception stopped; draining accepted events.");
-        await processingTask;
-        logger.LogInformation(
-            "ETW ingestion drain completed. AcceptedCount={AcceptedCount} ProcessedCount={ProcessedCount} DroppedCount={DroppedCount} FailureCount={FailureCount}",
-            observability.EtwEventsAccepted,
-            observability.EventsProcessed,
-            observability.EtwEventsDropped,
-            observability.EventProcessingFailures);
-        if (processingFailure is not null)
-        {
-            ExceptionDispatchInfo.Capture(processingFailure).Throw();
+            observability.SetEtwSubscriptionState(EtwSubscriptionState.Stopped);
         }
     }
 

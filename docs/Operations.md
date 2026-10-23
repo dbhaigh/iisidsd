@@ -21,6 +21,100 @@ SQLite busy/locked and other classified transient failures retain the current ba
 
 Ingestion counters are persisted to SQLite after batches and to an atomically replaced `<database-path>.etw-diagnostics.json` sidecar every five seconds. The sidecar is read as a fallback if SQLite diagnostics are unavailable; keep it with the database when moving the data directory. `/metrics` exposes `etw_events_received`, `etw_events_accepted`, `etw_events_dropped`, `etw_events_malformed`, `events_processed`, `event_processing_failures`, `event_processing_retries`, `auto_deny_failures`, `queue_depth`, `queue_high_water_mark`, and `etw_pipeline_latency`. Use the received/accepted/dropped counters to distinguish provider capture from queue saturation, and retries/failures to identify persistence trouble.
 
+## Health and operational diagnostics
+
+Use `/health/live` for process liveness. It does not query SQLite or depend on ETW. `/health/ready` checks SQLite and, when `IisEtw:Enabled=true`, requires the ETW listener to be in `Listening`. A failed readiness check returns HTTP 503 while liveness remains HTTP 200. `/health` preserves the concise `status` field and adds readiness, SQLite/ETW checks, version, a short revision hash of selected non-secret operational settings, and an operational snapshot. Use liveness for restart policy and readiness for traffic/service availability.
+
+Example responses (timestamps and revision vary):
+
+```text
+GET /health/live
+{"status":"ok","liveness":"live"}
+```
+
+```text
+GET /health/ready
+```
+
+```json
+{
+	"status": "ok",
+	"readiness": "ready",
+	"checks": {
+		"sqlite": {
+			"status": "ok",
+			"lastCheckedAtUtc": "2026-04-18T12:00:00+00:00",
+			"failureCount": 0,
+			"lastFailureType": null
+		},
+		"etw": {
+			"status": "ok",
+			"required": true,
+			"state": "listening",
+			"etwSubscriptionChangedAtUtc": "2026-04-18T11:59:58+00:00"
+		}
+	}
+}
+```
+
+Selected fields from `/health` (the live response contains the complete `operational` record):
+
+```json
+{
+	"status": "ok",
+	"liveness": "live",
+	"readiness": "ready",
+		"version": "0.2.4",
+	"configurationRevision": "a1b2c3d4e5f6",
+	"dryRun": false,
+	"enforcementMode": "enforce",
+	"droppedEventCount": 0,
+	"lastEnforcement": null,
+	"checks": {
+		"sqlite": { "status": "ok", "failureCount": 0, "lastFailureType": null },
+		"etw": { "status": "ok", "required": true, "state": "listening" }
+	},
+	"operational": {
+		"etwSubscriptionState": "listening",
+		"queueDepth": 0,
+		"queueCapacity": 10000,
+		"etwEventsDropped": 0,
+		"detectionEventsAnalyzed": 53,
+		"detectionEventsBySeverity": { "low": 12, "medium": 7, "high": 3, "critical": 1, "other": 0 },
+		"activeEventStreams": 1,
+		"retentionFailures": 0,
+		"iisAdministrationFailures": 0,
+		"recentOperationalEvents": []
+	}
+}
+```
+
+The full `operational` record includes the last-enforcement summary (outcome/time/simulation only) and counters for ETW, detector score/severity distributions, active event streams, SQLite write failures, retention, IIS expiry, recoveries, and fatal errors. Recent operational events are capped at 20 and contain only fixed component/kind/failure categories. These health payloads do not contain client IPs, request paths, domains, user-agent values, database paths, exception messages, or IIS site names.
+
+`/metrics` is administrator-only and renders local Prometheus text. Example lines:
+
+```text
+# HELP queue_depth Current ETW ingestion queue depth.
+# TYPE queue_depth gauge
+queue_depth 0
+# HELP queue_capacity Configured ETW ingestion queue capacity.
+# TYPE queue_capacity gauge
+queue_capacity 10000
+# HELP detection_events_by_severity Analyzed events by fixed risk severity.
+# TYPE detection_events_by_severity counter
+detection_events_by_severity{severity="low"} 12
+detection_events_by_severity{severity="medium"} 7
+detection_events_by_severity{severity="high"} 3
+detection_events_by_severity{severity="critical"} 1
+detection_events_by_severity{severity="other"} 0
+etw_subscription_state{state="listening"} 1
+event_stream_active_clients 1
+```
+
+Risk scores and indicator counts are exported as aggregate histograms. Severity and ETW state labels come from fixed allowlists; request-derived values are never metric labels. Most new operational counters are process-local. Existing ETW ingestion counters continue to restore from SQLite/sidecar diagnostics after restart.
+
+OpenTelemetry metrics export is opt-in. With `OpenTelemetry:OtlpEndpoint` unset, no OTLP exporter is registered and telemetry remains local. When configured, aggregate metric points are sent to that endpoint: counters, durations, queue gauges, score/indicator distributions, the last-event timestamp, and fixed severity/state labels. This service configures metrics only; it does not configure OTLP logs or traces. No event payloads, IP addresses, paths, domains, user agents, or arbitrary hostnames are exported in metric attributes.
+
 ## Performance benchmarks
 
 Correctness tests remain in `Tests/iisidsd.Tests`; the opt-in synthetic performance runner is separate so timing variance does not make correctness runs noisy. Run it on Windows from the repository root:
@@ -147,6 +241,32 @@ Notes:
 - During install/start from a full interactive host, the dashboard remains available while handoff completes, then the original host closes gracefully after readiness checks.
 - Stop and restart wait for the Windows service to stop gracefully; restart waits for the dashboard health endpoint before reporting success.
 - The context menu reports Windows service state and dashboard health separately. Lifecycle actions are enabled only for stable service states.
+- A fresh install runs as the virtual account `NT SERVICE\iisidsd`, not LocalSystem or an administrator. Installation grants it read/execute access to the application directory, modify access to `appsettings.json`, and modify access to `data/`. It does not grant IIS configuration rights. Existing service identities are preserved on upgrade; their permissions are not silently changed.
+- The tray companion runs in the installing user's interactive session at logon with limited privileges. It is separate from the long-running service and is guarded against duplicate instances in that session.
+- The default ETW listener is required for readiness. Validate `/health/ready` and the `etw` check on the target Windows host before relying on event collection; provider/session access depends on that host's ETW security configuration. Do not respond to an ETW permission failure by making the service an administrator without reviewing a narrower host policy.
+
+### Standalone install, upgrade, rollback, and removal
+
+Release builds are self-contained `win-x64` bundles. The ZIP contains exactly `iisidsd.exe`, the default `appsettings.json`, and the four referenced dashboard assets under `wwwroot/`. It excludes `data/`, development settings, repository reports, and environment-specific databases. CI validates the payload and emits a SHA-256 sidecar.
+
+1. Download the ZIP and matching `.sha256` file from the same release. Verify before extraction:
+
+	```powershell
+	$expected = ((Get-Content .\iisidsd-0.2.4-standalone-win-x64.zip.sha256) -split '\s+')[0]
+	$actual = (Get-FileHash .\iisidsd-0.2.4-standalone-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+	if ($actual -ne $expected) { throw 'Release checksum mismatch.' }
+	```
+
+2. Extract the versioned folder to a stable, administrator-controlled directory such as `C:\Program Files\iisidsd`. Keep the directory writable only by administrators and the service identity. The release settings retain loopback-only binding, remote access disabled, and IIS modifications disabled/dry-run by default.
+3. For a fresh install, run `iisidsd.exe` as an administrator and select **Install service** in the tray menu. The installer creates the automatic service, configures bounded SCM recovery actions, grants the virtual account its runtime file access, and registers the limited logon task for the current user. Confirm `http://127.0.0.1:5080/health/ready` reports `readiness=ready` and ETW is `listening` when enabled. A virtual account is intentionally not an IIS administrator; live IIS writes remain disabled until an operator reviews and explicitly configures the required host permissions and application settings.
+4. Before upgrading, stop the service and take a consistent backup of `appsettings.json` and the entire `data/` directory, including SQLite WAL/SHM files and the ETW diagnostics sidecar. Keep a copy of the current executable and `wwwroot/` for rollback. Do not copy release `appsettings.json` over the operator's file and do not replace or merge `data/`.
+5. Extract the new package to a temporary directory. Replace `iisidsd.exe` and the complete `wwwroot/` directory in the stable install directory; leave `appsettings.json` and `data/` in place. Run the new executable as an administrator and select **Install service** to reconcile the SCM binary path/start mode and recovery configuration. Upgrades preserve the existing service account and do not rewrite its ACLs. Start the service, then verify the expected version and `readiness=ready` at `/health/ready`; check ETW and dashboard assets separately.
+6. To roll back, stop the service, restore the saved executable and complete `wwwroot/` directory, and start the service. Keep the current configuration and database unless a release-specific migration requires restoring the matching backup. SQLite schema changes are not guaranteed to be reversible by restoring only the executable; confirm the release notes and validate the database backup before rollback.
+7. To remove the service, use **Uninstall service** from an elevated tray companion. This removes the SCM entry and current-user logon task but deliberately leaves the installation directory, configuration, database, audit history, and existing ACLs untouched. After verifying retention requirements and backups, an administrator may remove the directory separately. Deleting application data is not part of service uninstallation.
+
+`eng/Package-Standalone.ps1` builds the strict release ZIP and checksum; `eng/Test-StandaloneUpgrade.ps1` stages an upgrade/rollback and verifies that configuration, SQLite, and diagnostics bytes are preserved. CI runs the staging check against a package-shaped prior install. A local run also exercised the staging check with the available 0.2.3 standalone bundle. These checks do not install a Windows service or prove virtual-account ETW/IIS access.
+
+The tray's stop action waits up to 60 seconds for SCM to report `Stopped`. Accepted ETW events are drained before graceful process shutdown; if SQLite remains transiently unavailable, the ingestion worker retries without a fixed retry limit, so a stop can exceed that UI wait. Forced termination can lose queued, not-yet-persisted events. Check service status and SQLite health before forcing termination.
 
 ## Dashboard network access
 
@@ -221,6 +341,8 @@ Check:
 - Windows environment support
 - application logs for ETW startup failures
 - `/metrics` values `etw_events_received` and `events_processed` to distinguish provider capture from event persistence
+- `/health/live` versus `/health/ready`; inspect `checks.etw.state` and `checks.sqlite` to identify which dependency is not ready
+- `queue_depth`, `queue_capacity`, and `etw_events_dropped` for saturation; `event_processing_retries` and `recovery_attempts` for transient storage trouble
 
 ### No IIS sites shown
 

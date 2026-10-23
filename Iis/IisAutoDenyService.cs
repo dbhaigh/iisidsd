@@ -54,25 +54,19 @@ public sealed class IisAutoDenyService(
         if (!policy.CanMutate)
         {
             logger.LogInformation(
-                "Automatic deny-list action evaluated in {EnforcementMode} mode. ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason}",
+                "Automatic deny-list action evaluated in {EnforcementMode} mode. RiskScore={RiskScore} RiskSeverity={RiskSeverity}",
                 policy.Mode,
-                securityEvent.ClientIp,
-                securityEvent.Domain,
                 securityEvent.RiskScore,
-                securityEvent.RiskSeverity,
-                securityEvent.DetectionReason);
+                securityEvent.RiskSeverity);
             return;
         }
 
         if (updatedSites.Count == 0)
         {
             logger.LogWarning(
-                "Automatic deny-list update found no matching IIS sites. ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason}",
-                securityEvent.ClientIp,
-                securityEvent.Domain,
+                "Automatic deny-list update found no matching IIS sites. RiskScore={RiskScore} RiskSeverity={RiskSeverity}",
                 securityEvent.RiskScore,
-                securityEvent.RiskSeverity,
-                securityEvent.DetectionReason);
+                securityEvent.RiskSeverity);
             return;
         }
 
@@ -80,12 +74,9 @@ public sealed class IisAutoDenyService(
         banCountService.IncrementBanCounts(securityEvent.ClientIp, [securityEvent.Domain]);
 
         logger.LogInformation(
-            "Automatic deny-list action applied to {SiteCount} IIS site(s). ClientIp={ClientIp} Domain={Domain} RiskScore={RiskScore} RiskSeverity={RiskSeverity} DetectionReason={DetectionReason}",
-            securityEvent.ClientIp,
+            "Automatic deny-list action applied to {SiteCount} IIS site(s). RiskScore={RiskScore} RiskSeverity={RiskSeverity}",
             updatedSites.Count,
-            securityEvent.Domain,
             securityEvent.RiskScore,
-            securityEvent.RiskSeverity,
-            securityEvent.DetectionReason);
+            securityEvent.RiskSeverity);
     }
 }

@@ -34,6 +34,7 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
     private readonly FakeDenyListService _denyListService = new();
     private readonly FakeDenyListStore _denyListStore = new();
     private readonly FakeAnalystIncidentStore _incidentStore = new();
+    private readonly FakeNotificationQueue _notificationQueue = new();
     private readonly FakeBackendConfigurationStore _configurationStore = new();
     private readonly NonMatchingAllowList _allowList = new();
     private WebApplication _app = null!;
@@ -87,6 +88,7 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         builder.Services.AddSingleton<IEventStore>(_eventStore);
         builder.Services.AddSingleton<IReplayableEventStore>(_eventStore);
         builder.Services.AddSingleton<IAnalystIncidentStore>(_incidentStore);
+        builder.Services.AddSingleton<INotificationQueue>(_notificationQueue);
         builder.Services.AddSingleton<IIpAggregationService>(_aggregationService);
         builder.Services.AddSingleton<IBanCountService>(_banCountService);
         builder.Services.AddSingleton<IIisSiteDiscoveryService>(_siteDiscoveryService);
@@ -106,6 +108,8 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         _app.UseAuthorization();
         _app.MapDashboardEndpoints(new JsonSerializerOptions(JsonSerializerDefaults.Web));
         _app.MapBackendConfigurationEndpoints();
+        _app.Services.GetRequiredService<IisObservability>()
+            .SetEtwSubscriptionState(EtwSubscriptionState.Listening);
         await _app.StartAsync();
         _client = _app.GetTestClient();
         _client.BaseAddress = new Uri("https://localhost");
@@ -129,6 +133,8 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         var paths = new[]
         {
             "/health",
+            "/health/live",
+            "/health/ready",
             "/api/events",
             "/api/findings",
             $"/api/findings/{ClientIp}",
@@ -148,12 +154,22 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         using var healthResponse = await SendAsync(HttpMethod.Get, "/health", body: null, role: "user");
         using var health = JsonDocument.Parse(await healthResponse.Content.ReadAsStringAsync());
         Assert.Equal("ok", health.RootElement.GetProperty("status").GetString());
-        Assert.Single(health.RootElement.EnumerateObject());
+        Assert.Equal("live", health.RootElement.GetProperty("liveness").GetString());
+        Assert.Equal("ready", health.RootElement.GetProperty("readiness").GetString());
+        Assert.Equal(12, health.RootElement.GetProperty("configurationRevision").GetString()?.Length);
+        Assert.Equal("enforce", health.RootElement.GetProperty("enforcementMode").GetString());
+        Assert.Equal(0, health.RootElement.GetProperty("droppedEventCount").GetInt64());
+        Assert.Equal(JsonValueKind.Null, health.RootElement.GetProperty("lastEnforcement").ValueKind);
+        Assert.DoesNotContain(ClientIp, health.RootElement.GetRawText());
 
         using var streamResponse = await SendAsync(HttpMethod.Get, "/api/events/stream?afterSequence=0", body: null, role: "user");
         var streamContent = await streamResponse.Content.ReadAsStringAsync();
         Assert.Contains("event: etw", streamContent);
         Assert.Contains(ClientIp, streamContent);
+        var streamDiagnostics = _app.Services.GetRequiredService<IisObservability>()
+            .GetOperationalDiagnosticsSnapshot("test", "test");
+        Assert.Equal(0, streamDiagnostics.ActiveEventStreams);
+        Assert.Equal(2, streamDiagnostics.EventStreamConnections);
     }
 
     [Fact]
@@ -168,6 +184,22 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
         Assert.Contains("no-cache", response.Headers.CacheControl?.ToString());
+    }
+
+    [Fact]
+    public async Task Health_ReadinessTracksEtwWhileLivenessRemainsAvailable()
+    {
+        var observability = _app.Services.GetRequiredService<IisObservability>();
+        observability.SetEtwSubscriptionState(EtwSubscriptionState.Unsupported);
+
+        using var liveResponse = await SendAsync(HttpMethod.Get, "/health/live", body: null, role: "user");
+        using var readyResponse = await SendAsync(HttpMethod.Get, "/health/ready", body: null, role: "user");
+
+        Assert.Equal(HttpStatusCode.OK, liveResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, readyResponse.StatusCode);
+        using var readiness = JsonDocument.Parse(await readyResponse.Content.ReadAsStringAsync());
+        Assert.Equal("not-ready", readiness.RootElement.GetProperty("readiness").GetString());
+        Assert.Equal("unsupported", readiness.RootElement.GetProperty("checks").GetProperty("etw").GetProperty("state").GetString());
     }
 
     [Fact]
@@ -329,6 +361,9 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
             (HttpMethod.Get, "/api/ban-counts", (string?)null),
             (HttpMethod.Get, "/api/incidents?limit=500", (string?)null),
             (HttpMethod.Put, $"/api/incidents/{ClientIp}", """{"status":"acknowledged","note":"Reviewed"}"""),
+            (HttpMethod.Get, "/api/notifications?limit=50", (string?)null),
+            (HttpMethod.Get, "/api/notifications/status", (string?)null),
+            (HttpMethod.Post, $"/api/notifications/{FakeNotificationQueue.NotificationId}/acknowledge", (string?)null),
             (HttpMethod.Get, "/api/iis/sites", (string?)null),
             (HttpMethod.Get, "/api/iis/sites/Example%20Site/deny-list", (string?)null),
             (HttpMethod.Get, "/api/export/findings", (string?)null),
@@ -403,7 +438,7 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
     [Fact]
     public async Task BackendConfigurationUpdate_RequiresAdministratorAndReportsRestartRequired()
     {
-        const string body = """{"settings":{}}""";
+        const string body = """{"settings":{},"expectedRevision":"revision-1"}""";
         using var anonymousResponse = await SendAsync(HttpMethod.Patch, "/api/configuration", body);
         using var nonAdministratorResponse = await SendAsync(HttpMethod.Patch, "/api/configuration", body, "user");
         using var administratorResponse = await SendAsync(HttpMethod.Patch, "/api/configuration", body, "administrator");
@@ -787,6 +822,52 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         }
     }
 
+    private sealed class FakeNotificationQueue : INotificationQueue
+    {
+        public const string NotificationId = "00000000000000000000000000000001";
+        private NotificationIncident? _incident = new(
+            NotificationId,
+            ClientIp,
+            "example.test",
+            "High suspicious activity",
+            8,
+            "High",
+            DateTimeOffset.UnixEpoch,
+            DateTimeOffset.UnixEpoch,
+            DateTimeOffset.UnixEpoch,
+            [],
+            "delivered",
+            1,
+            null,
+            DateTimeOffset.UnixEpoch,
+            null,
+            null,
+            null);
+
+        public NotificationEnqueueResult Enqueue(SecurityEvent webEvent, SqliteConnection connection, SqliteTransaction transaction)
+            => NotificationEnqueueResult.NotEligible;
+
+        public IReadOnlyList<NotificationIncident> List(int limit = 250)
+            => _incident is null ? [] : [_incident];
+
+        public IReadOnlyList<NotificationIncident> GetDue(DateTimeOffset now, int limit = 25) => [];
+
+        public NotificationQueueStatus GetStatus() => new(0, 0, 1, 0, 0, 0);
+
+        public int PruneExpired(DateTimeOffset olderThanUtc) => 0;
+
+        public void RecordDelivered(string id, DateTimeOffset attemptedAtUtc) { }
+
+        public void RecordFailure(string id, DateTimeOffset attemptedAtUtc, string failureType) { }
+
+        public NotificationIncident? Acknowledge(string id, DateTimeOffset acknowledgedAtUtc, string acknowledgedBy)
+        {
+            if (_incident?.Id != id) return null;
+            _incident = _incident with { Status = "acknowledged", AcknowledgedAtUtc = acknowledgedAtUtc, AcknowledgedBy = acknowledgedBy };
+            return _incident;
+        }
+    }
+
     private sealed class FakeBackendConfigurationStore : IBackendConfigurationStore
     {
         private static readonly JsonElement Settings = JsonDocument
@@ -798,12 +879,24 @@ public sealed class DashboardEndpointTests : IAsyncLifetime
         public Task<JsonElement> GetSettingsAsync(CancellationToken cancellationToken)
             => Task.FromResult(Settings);
 
+        public Task<BackendConfigurationSnapshot> GetConfigurationSnapshotAsync(CancellationToken cancellationToken)
+            => Task.FromResult(new BackendConfigurationSnapshot(Settings, "revision-1"));
+
         public Task<BackendConfigurationSaveResult> SaveSettingsAsync(
             JsonElement settings,
             CancellationToken cancellationToken)
         {
             SaveCalls++;
             return Task.FromResult(new BackendConfigurationSaveResult(true, new Dictionary<string, string[]>()));
+        }
+
+        public Task<BackendConfigurationSaveResult> SaveSettingsAsync(
+            JsonElement settings,
+            string expectedRevision,
+            CancellationToken cancellationToken)
+        {
+            SaveCalls++;
+            return Task.FromResult(new BackendConfigurationSaveResult(true, new Dictionary<string, string[]>(), "revision-2"));
         }
     }
 

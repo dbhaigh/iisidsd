@@ -6,6 +6,7 @@ using iisidsd.Detection;
 using iisidsd.Models;
 using iisidsd.Storage;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace iisidsd.DetectionEvaluation;
 
@@ -68,7 +69,17 @@ public static class DetectionEvaluationRunner
     {
         var events = ExpandEvents(scenario);
         var eventStore = new ReplayEventStore();
-        var detector = new SuspiciousActivityDetector(Options.Create(options), eventStore);
+        var heuristic = new SuspiciousActivityDetector(Options.Create(options), eventStore);
+        var moduleOptions = new DetectionModulesOptions();
+        moduleOptions.Modules[heuristic.Descriptor.Id] = new DetectionModuleSettings
+        {
+            Enabled = true,
+            Mode = DetectionModuleMode.Contribute
+        };
+        var detector = new DetectionEngine(
+            [heuristic],
+            Options.Create(moduleOptions),
+            logger: NullLogger<DetectionEngine>.Instance);
         var evaluations = new List<EventEvaluation>(events.Count);
         DateTimeOffset? firstDetectionTimestamp = null;
         DateTimeOffset? activityStartTimestamp = null;
@@ -97,7 +108,7 @@ public static class DetectionEvaluationRunner
                     evidence.ScoreContribution, evidence.Contributed)).ToArray(),
                 isDetected ? detectedEvent!.RiskIndicators ?? [] : []));
 
-            eventStore.Publish(detectedEvent ?? fixtureEvent.ToSecurityEvent());
+            eventStore.Publish(detectedEvent ?? (fixtureEvent.ToSecurityEvent() with { DetectionEvidence = assessment.Evidence }));
             if (activityStartIndex >= 0 && index >= activityStartIndex && isDetected && firstDetectionTimestamp is null)
             {
                 firstDetectionTimestamp = fixtureEvent.Timestamp;
