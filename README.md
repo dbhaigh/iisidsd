@@ -17,6 +17,11 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls
 
+## Release 0.2.10 highlights
+
+- ETW access failures no longer take down the service host; the listener retries with bounded backoff while the dashboard remains available.
+- Service installation grants its virtual identity the Performance Log Users permission needed for ETW provider access and cleans up installer-added membership on uninstall.
+
 ## Release 0.2.8 highlights
 
 - Service install/start from an interactive host preserves the open dashboard during graceful handoff; the service starts after the old host exits and the dashboard reconnects to its live event stream.

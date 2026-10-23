@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.2.10 - 2026-10-22
+
+### Fixed
+- ETW startup failures now retry with bounded backoff instead of stopping the service host, keeping the dashboard available while trace access recovers.
+- Fresh service installation grants the virtual service identity the Windows Performance Log Users permission required to enable and collect ETW traces; uninstall removes only membership added by the installer.
+
+### Documentation
+- Documented the service's ETW permission, retry, and degraded-readiness behavior.
+
 ## 0.2.8 - 2026-10-22
 
 ### Fixed

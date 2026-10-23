@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Principal;
 using System.ServiceProcess;
 using System.Text.Json;
+using Microsoft.Win32;
 using System.Windows.Forms;
 using iisidsd.Configuration;
 using Microsoft.Extensions.Options;
@@ -107,6 +108,9 @@ public sealed class TrayIconService(
         private const string ServiceName = "iisidsd";
         private const string TrayCompanionTaskName = "iisidsd Tray Companion";
         private const string ServiceAccount = "NT SERVICE\\iisidsd";
+        private const string PerformanceLogUsersSid = "S-1-5-32-559";
+        private const string InstallerRegistryKeyPath = @"SOFTWARE\iisidsd";
+        private const string EtwGroupMembershipValue = "InstallerAddedPerformanceLogUsersMembership";
 
         private readonly NotifyIcon _icon;
         private readonly string _browserUrl;
@@ -331,7 +335,7 @@ public sealed class TrayIconService(
         {
             if (!await Task.Run(EnsureServiceInstalled))
             {
-                ShowResult(operation, false, "Run as Administrator to manage Windows services.");
+                ShowResult(operation, false, "Run as Administrator and verify ETW trace permissions.");
                 return;
             }
 
@@ -339,7 +343,7 @@ public sealed class TrayIconService(
             {
                 var started = await Task.Run(StartServiceWithBoundedRetries);
                 started = started && await WaitForServiceDashboardReadyAsync(TimeSpan.FromSeconds(60));
-                ShowResult(operation, started, "Run as Administrator to manage Windows services.");
+                ShowResult(operation, started, "Run as Administrator and verify ETW trace permissions.");
                 return;
             }
 
@@ -420,7 +424,14 @@ public sealed class TrayIconService(
         {
             if (!TryGetServiceStatus(out var status, out var serviceNotInstalled))
             {
-                return serviceNotInstalled && RemoveTrayCompanionAutoStart();
+                if (!serviceNotInstalled)
+                {
+                    return false;
+                }
+
+                var taskRemoved = RemoveTrayCompanionAutoStart();
+                var membershipRemovedWithoutService = RemoveInstallerManagedEtwMembership();
+                return taskRemoved && membershipRemovedWithoutService;
             }
 
             if (status != ServiceControllerStatus.Stopped && !StopServiceAndWait(TimeSpan.FromSeconds(60)))
@@ -434,7 +445,9 @@ public sealed class TrayIconService(
                 return false;
             }
 
-            return RemoveTrayCompanionAutoStart();
+            var trayTaskRemoved = RemoveTrayCompanionAutoStart();
+            var etwMembershipRemoved = RemoveInstallerManagedEtwMembership();
+            return trayTaskRemoved && etwMembershipRemoved;
         }
 
         private async Task ExecuteServiceOperationAsync(string operation, Func<Task> action)
@@ -480,6 +493,7 @@ public sealed class TrayIconService(
 
             return EnsureServiceStartupAndRecovery() &&
                 EnsureServiceRuntimePermissions(processPath, grantVirtualServiceAccount: !serviceAlreadyInstalled) &&
+                EnsureEtwTraceAccess() &&
                 EnsureTrayCompanionAutoStart();
         }
 
@@ -504,6 +518,159 @@ public sealed class TrayIconService(
                 RunIcaclsCommand(installDirectory, "/grant", $"{ServiceAccount}:(WD)") &&
                 RunIcaclsCommand(settingsPath, "/grant", $"{ServiceAccount}:(M)") &&
                 RunIcaclsCommand(dataDirectory, "/grant", $"{ServiceAccount}:(OI)(CI)(M)", "/T", "/C");
+        }
+
+        private bool EnsureEtwTraceAccess()
+        {
+            if (!TryGetPerformanceLogUsersMembership(out var groupName, out var isMember))
+            {
+                return false;
+            }
+
+            if (isMember)
+            {
+                return true;
+            }
+
+            if (!RunNetLocalGroupCommand(out _, "localgroup", groupName, ServiceAccount, "/add"))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var key = Registry.LocalMachine.CreateSubKey(InstallerRegistryKeyPath, writable: true)
+                    ?? throw new InvalidOperationException("Unable to create the iisidsd installer registry key.");
+                key.SetValue(EtwGroupMembershipValue, 1, RegistryValueKind.DWord);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Unable to record installer ownership of the ETW trace permission.");
+                if (!RunNetLocalGroupCommand(out _, "localgroup", groupName, ServiceAccount, "/delete"))
+                {
+                    _logger.LogError("The service account remains in Performance Log Users because rollback failed.");
+                }
+
+                return false;
+            }
+        }
+
+        private bool RemoveInstallerManagedEtwMembership()
+        {
+            try
+            {
+                using (var key = Registry.LocalMachine.OpenSubKey(InstallerRegistryKeyPath))
+                {
+                    if (key?.GetValue(EtwGroupMembershipValue) is not int installedByIisidsd ||
+                        installedByIisidsd != 1)
+                    {
+                        return true;
+                    }
+                }
+
+                if (!TryGetPerformanceLogUsersMembership(out var groupName, out var isMember))
+                {
+                    return false;
+                }
+
+                if (isMember &&
+                    !RunNetLocalGroupCommand(out _, "localgroup", groupName, ServiceAccount, "/delete"))
+                {
+                    return false;
+                }
+
+                using var writableKey = Registry.LocalMachine.OpenSubKey(InstallerRegistryKeyPath, writable: true);
+                writableKey?.DeleteValue(EtwGroupMembershipValue, throwOnMissingValue: false);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Unable to remove installer-managed ETW trace permissions.");
+                return false;
+            }
+        }
+
+        private bool TryGetPerformanceLogUsersMembership(out string groupName, out bool isMember)
+        {
+            groupName = string.Empty;
+            isMember = false;
+            try
+            {
+                var groupAccount = new SecurityIdentifier(PerformanceLogUsersSid)
+                    .Translate(typeof(NTAccount))
+                    .Value;
+                var separator = groupAccount.LastIndexOf('\\');
+                if (separator < 0)
+                {
+                    throw new InvalidOperationException("Unable to resolve the Performance Log Users group name.");
+                }
+
+                groupName = groupAccount[(separator + 1)..];
+                if (!RunNetLocalGroupCommand(out var members, "localgroup", groupName))
+                {
+                    return false;
+                }
+
+                isMember = members
+                    .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                    .Any(member => string.Equals(member.Trim(), ServiceAccount, StringComparison.OrdinalIgnoreCase));
+                return true;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Unable to inspect Performance Log Users membership.");
+                return false;
+            }
+        }
+
+        private bool RunNetLocalGroupCommand(out string output, params string[] arguments)
+        {
+            output = string.Empty;
+            try
+            {
+                var startInfo = new ProcessStartInfo("net.exe")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                foreach (var argument in arguments) startInfo.ArgumentList.Add(argument);
+                using var process = Process.Start(startInfo);
+                if (process is null)
+                {
+                    return false;
+                }
+
+                var outputTask = process.StandardOutput.ReadToEndAsync();
+                var errorTask = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(30_000))
+                {
+                    process.Kill(entireProcessTree: true);
+                    _logger.LogError("net.exe localgroup {Operation} timed out.", arguments.LastOrDefault() ?? "query");
+                    return false;
+                }
+
+                Task.WaitAll(outputTask, errorTask);
+                output = $"{outputTask.Result}{Environment.NewLine}{errorTask.Result}";
+                if (process.ExitCode == 0)
+                {
+                    return true;
+                }
+
+                _logger.LogError(
+                    "net.exe localgroup {Arguments} failed with exit code {ExitCode}. {Output}",
+                    string.Join(" ", arguments),
+                    process.ExitCode,
+                    output.Trim());
+                return false;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Unable to run net.exe localgroup {Arguments}.", arguments);
+                return false;
+            }
         }
 
         private bool RunIcaclsCommand(params string[] arguments)
