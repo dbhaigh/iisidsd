@@ -113,7 +113,10 @@ builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("DashboardAdministrator", policy =>
         policy.RequireAuthenticatedUser()
-            .RequireAssertion(context => DashboardAccessPolicy.CanAccessAdministratorFeatures(context.User)));
+            .RequireAssertion(context => context.Resource is HttpContext httpContext &&
+                DashboardAccessPolicy.CanAccessAdministratorFeatures(
+                    context.User,
+                    DashboardAccessPolicy.IsLocalRequest(httpContext.Connection.RemoteIpAddress))));
 });
 builder.Services.AddSingleton<IFindingStore, SqliteFindingStore>();
 builder.Services.AddSingleton<IAnalystIncidentStore, SqliteAnalystIncidentStore>();

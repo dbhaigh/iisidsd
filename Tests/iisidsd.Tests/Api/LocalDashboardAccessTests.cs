@@ -31,7 +31,10 @@ public sealed class LocalDashboardAccessTests
         builder.Services.AddAuthorization(options =>
             options.AddPolicy("DashboardAdministrator", policy =>
                 policy.RequireAuthenticatedUser()
-                    .RequireAssertion(context => DashboardAccessPolicy.CanAccessAdministratorFeatures(context.User))));
+                    .RequireAssertion(context => context.Resource is HttpContext httpContext &&
+                        DashboardAccessPolicy.CanAccessAdministratorFeatures(
+                            context.User,
+                            DashboardAccessPolicy.IsLocalRequest(httpContext.Connection.RemoteIpAddress)))));
 
         var mutationCount = 0;
         var app = builder.Build();

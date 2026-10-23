@@ -1,5 +1,16 @@
 # Change Log
 
+## 0.2.6 - 2026-10-22
+
+### Fixed
+- Local administrator-only dashboard actions now recognize authenticated Windows administrator accounts whose built-in Administrators SID is marked deny-only by UAC.
+
+### Security
+- The UAC deny-only membership allowance applies only to loopback requests; remote requests still require enabled Windows Administrator membership, and non-Windows role claims remain untrusted.
+
+### Validation
+- Added coverage for filtered administrator tokens, loopback-only authorization, and rejection of forged deny-only SID claims.
+
 ## 0.2.5 - 2026-10-22
 
 ### Changed

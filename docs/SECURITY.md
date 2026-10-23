@@ -2,7 +2,7 @@
 
 ## Authorization Matrix
 
-The global dashboard gate runs before routing. With `Dashboard:RemoteAccessEnabled=false` (the default), only loopback peers are accepted; loopback is a network exposure boundary and is not caller authentication. With remote access enabled, every request, including a loopback request, must use HTTPS and authenticate through Windows Negotiate. Administrator-only routes additionally require the authenticated Windows identity to belong to the Windows Administrators group.
+The global dashboard gate runs before routing. With `Dashboard:RemoteAccessEnabled=false` (the default), only loopback peers are accepted; loopback is a network exposure boundary and is not caller authentication. With remote access enabled, every request, including a loopback request, must use HTTPS and authenticate through Windows Negotiate. Administrator-only routes require the authenticated Windows identity to belong to the Windows Administrators group. For loopback requests only, an authenticated Windows identity with the built-in Administrators SID marked deny-only by UAC is also recognized as an administrator account; remote requests require the enabled administrator role.
 
 - `GET /`, static dashboard assets, `GET /health`, `GET /health/live`, `GET /health/ready`: anonymous on loopback in default mode; authenticated Windows user in remote mode. Health reports liveness/readiness and aggregate operational diagnostics, but not request identifiers or payloads.
 - `GET /openapi/v1.json` (Development environment only): anonymous on loopback in default mode; authenticated Windows user in remote mode. It exposes the API schema, not application data or a management operation.
@@ -33,7 +33,7 @@ IIS mutation safety is independently enforced by the deny-list service: `EnableD
 
 ## Threat Model and Assumptions
 
-Protected assets include IIS configuration and deny-list entries, ban-count metadata, editable service configuration, retained request events/findings, and operational metrics. The service may run elevated to manage IIS; its Windows token is never used as proof that an HTTP caller is trusted.
+Protected assets include IIS configuration and deny-list entries, ban-count metadata, editable service configuration, retained request events/findings, and operational metrics. The service may run elevated to manage IIS; its Windows token is never used as proof that an HTTP caller is trusted. Local management authorization uses the authenticated caller's Windows identity, including UAC deny-only membership for the built-in Administrators group; elevation of the service process alone does not grant access.
 
 The default local workflow assumes anonymous local users may view the dashboard and event/finding data. A process that can connect to loopback can read those views. Every management operation still requires an authenticated Windows Administrator, regardless of whether the process is elevated. Local malware running as an administrator can of course use that administrator's identity and is outside this boundary.
 

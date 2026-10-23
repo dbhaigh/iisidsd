@@ -40,8 +40,20 @@ public static class DashboardAccessPolicy
         => principal.Identity is WindowsIdentity identity &&
             new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
 
-    public static bool CanAccessAdministratorFeatures(ClaimsPrincipal principal)
-        => IsWindowsAdministrator(principal);
+    public static bool CanAccessAdministratorFeatures(ClaimsPrincipal principal, bool isLocalRequest = false)
+    {
+        if (IsWindowsAdministrator(principal))
+        {
+            return true;
+        }
+
+        return isLocalRequest &&
+            principal.Identity is WindowsIdentity identity &&
+            identity.IsAuthenticated &&
+            identity.Claims.Any(claim =>
+                claim.Type == ClaimTypes.DenyOnlySid &&
+                claim.Value == "S-1-5-32-544");
+    }
 
     public static bool IsLocalRequest(IPAddress? remoteAddress)
     {

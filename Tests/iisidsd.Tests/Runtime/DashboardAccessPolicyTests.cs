@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Security.Principal;
 using iisidsd.Runtime;
 
 namespace iisidsd.Tests.Runtime;
@@ -42,5 +43,32 @@ public sealed class DashboardAccessPolicyTests
             authenticationType: "test"));
 
         Assert.False(DashboardAccessPolicy.CanAccessAdministratorFeatures(principal));
+    }
+
+    [Fact]
+    public void CanAccessAdministratorFeatures_RejectsDenyOnlySidClaimsFromNonWindowsIdentities()
+    {
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.DenyOnlySid, "S-1-5-32-544")],
+            authenticationType: "test"));
+
+        Assert.False(DashboardAccessPolicy.CanAccessAdministratorFeatures(principal, isLocalRequest: true));
+    }
+
+    [Fact]
+    public void CanAccessAdministratorFeatures_RecognizesFilteredAdministratorMembershipOnlyForLocalRequests()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        var principal = new ClaimsPrincipal(identity);
+        var hasEnabledAdministratorRole = new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+        var hasFilteredAdministratorSid = identity.Claims.Any(claim =>
+            claim.Type == ClaimTypes.DenyOnlySid && claim.Value == "S-1-5-32-544");
+
+        Assert.Equal(
+            hasEnabledAdministratorRole || hasFilteredAdministratorSid,
+            DashboardAccessPolicy.CanAccessAdministratorFeatures(principal, isLocalRequest: true));
+        Assert.Equal(
+            hasEnabledAdministratorRole,
+            DashboardAccessPolicy.CanAccessAdministratorFeatures(principal, isLocalRequest: false));
     }
 }
