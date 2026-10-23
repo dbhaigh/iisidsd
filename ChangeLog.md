@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.2.5 - 2026-10-22
+
+### Changed
+- Local dashboard defaults now use `localhost` so supported browsers can silently negotiate with the signed-in Windows account.
+- Dashboard API requests explicitly send same-origin Windows credentials; read-only local viewing remains anonymous.
+
+### Security
+- Management routes continue to require an authenticated Windows Administrator; local loopback access does not bypass authorization.
+
 ## 0.2.4 - 2026-10-22
 
 ### Added

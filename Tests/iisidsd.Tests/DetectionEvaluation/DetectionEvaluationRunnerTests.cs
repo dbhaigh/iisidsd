@@ -132,7 +132,7 @@ public sealed class DetectionEvaluationRunnerTests
         var sameVersionComparison = EvaluationComparison.Compare(report, report);
         var candidate = report with
         {
-            DetectorVersion = "0.2.4.0",
+            DetectorVersion = "0.2.5.0",
             DetectorRevision = "candidate-revision",
             DatasetSha256 = "candidate-dataset",
             Overall = report.Overall with
@@ -154,8 +154,8 @@ public sealed class DetectionEvaluationRunnerTests
         Assert.Equal(0, sameVersionComparison.EventBehavior.DetectionsRemoved);
         Assert.Equal(225, sameVersionComparison.EventBehavior.RiskScoresUnchanged);
         Assert.False(changedComparison.SameDataset);
-        Assert.Equal("0.2.4.0", changedComparison.BaselineDetectorVersion);
-        Assert.Equal("0.2.4.0", changedComparison.CandidateDetectorVersion);
+        Assert.Equal("0.2.5.0", changedComparison.BaselineDetectorVersion);
+        Assert.Equal("0.2.5.0", changedComparison.CandidateDetectorVersion);
         Assert.Equal(report.DetectorRevision, changedComparison.BaselineDetectorRevision);
         Assert.Equal("candidate-revision", changedComparison.CandidateDetectorRevision);
         Assert.Equal(1, changedComparison.Overall.TruePositives);

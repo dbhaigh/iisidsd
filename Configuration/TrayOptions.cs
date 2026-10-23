@@ -7,5 +7,5 @@ public sealed class TrayOptions
     public const string SectionName = "Tray";
 
     [Required, Url]
-    public string BrowserUrl { get; set; } = "http://127.0.0.1:5080/";
+    public string BrowserUrl { get; set; } = "http://localhost:5080/";
 }

@@ -55,7 +55,7 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
             ?? throw new InvalidDataException("The appsettings.json root must be a JSON object.");
         var settings = new EditableBackendConfiguration
         {
-            Urls = ReadRootValue(root, "Urls", "http://127.0.0.1:5080"),
+            Urls = ReadRootValue(root, "Urls", "http://localhost:5080"),
             Logging = ReadSection(root, "Logging", new LoggingSettings()),
             IisEtw = ReadSection(root, "IisEtw", new IisEtwOptions()),
             Detection = ReadSection(root, "Detection", new DetectionOptions()),
@@ -181,11 +181,11 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
             }
 
             var root = await ReadSettingsFileAsync(cancellationToken);
-            var existingUrls = ReadRootValue(root, "Urls", "http://127.0.0.1:5080");
+            var existingUrls = ReadRootValue(root, "Urls", "http://localhost:5080");
             var urlsToSave = string.Equals(configuration.Urls, RedactUrls(existingUrls), StringComparison.Ordinal)
                 ? existingUrls
                 : configuration.Urls;
-            var existingBrowserUrl = ReadSectionValue(root, "Tray", "BrowserUrl", "http://127.0.0.1:5080/");
+            var existingBrowserUrl = ReadSectionValue(root, "Tray", "BrowserUrl", "http://localhost:5080/");
             var browserUrlToSave = string.Equals(
                 configuration.Tray.BrowserUrl,
                 RedactEndpoint(existingBrowserUrl),
@@ -447,7 +447,7 @@ public sealed class BackendConfigurationStore(IHostEnvironment hostEnvironment) 
 
     private sealed record EditableBackendConfiguration
     {
-        public string Urls { get; init; } = "http://127.0.0.1:5080";
+        public string Urls { get; init; } = "http://localhost:5080";
         public LoggingSettings Logging { get; init; } = new();
         public IisEtwOptions IisEtw { get; init; } = new();
         public DetectionOptions Detection { get; init; } = new();

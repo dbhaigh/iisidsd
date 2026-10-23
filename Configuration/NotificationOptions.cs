@@ -39,7 +39,7 @@ public sealed class NotificationOptions
     [Range(1, 365)]
     public int RetentionDays { get; set; } = 30;
 
-    public string DashboardUrl { get; set; } = "http://127.0.0.1:5080/";
+    public string DashboardUrl { get; set; } = "http://localhost:5080/";
 
     public bool IsValid()
         => (string.Equals(Provider, "None", StringComparison.OrdinalIgnoreCase) ||

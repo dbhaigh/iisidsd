@@ -1276,7 +1276,7 @@ function render() {
 }
 
 async function fetchJson(url, options) {
-  const response = await fetch(url, options);
+  const response = await fetch(url, { ...options, credentials: 'same-origin' });
   if (!response.ok) {
     const body = await response.text();
     let detail = body.slice(0, 300);

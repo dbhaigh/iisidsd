@@ -51,7 +51,8 @@ function Get-IisidsdStandalonePayload {
     if ($RequireSafeDefaults) {
         if (-not $IncludeSettings) { throw 'Safe-default validation requires appsettings.json.' }
         $settings = Get-Content -LiteralPath (Join-Path $root 'appsettings.json') -Raw | ConvertFrom-Json
-        if ($settings.Urls -cne 'http://127.0.0.1:5080' -or
+        $allowedLoopbackUrls = @('http://127.0.0.1:5080', 'http://localhost:5080')
+        if ($settings.Urls -cnotin $allowedLoopbackUrls -or
             $settings.Dashboard.RemoteAccessEnabled -ne $false -or
             $settings.IisAdmin.EnableDenyListChanges -ne $false -or
             $settings.IisAdmin.DryRun -ne $true) {

@@ -185,9 +185,11 @@ The tray menu also displays operational status fetched from the local `/health` 
 
 ### Dashboard network access
 
-The `Urls` setting controls the dashboard listener. The default listens only on loopback at `http://127.0.0.1:5080/`.
+The `Urls` setting controls the dashboard listener. The default listens only on loopback at `http://localhost:5080/`.
 
-By default `Urls` is `http://127.0.0.1:5080` and non-loopback requests are rejected. Anonymous local users may view the dashboard and read-only event/finding APIs. Every management operation requires an authenticated Windows Administrator, including when the service is elevated and the request arrives over loopback. The browser authenticates using Windows Authentication; users who are not Windows Administrators retain dashboard viewing but cannot access management features.
+By default `Urls` is `http://localhost:5080` and non-loopback requests are rejected. Anonymous local users may view the dashboard and read-only event/finding APIs. Management APIs use Windows Negotiate with same-origin browser credentials and require a Windows Administrator, including when the service is elevated and the request arrives over loopback. The tray opens the `localhost` URL so the browser can silently use the signed-in Windows account when integrated authentication is enabled; users who are not Windows Administrators retain dashboard viewing but cannot access management features.
+
+Existing installations preserve their configured URLs during upgrade. To use the `localhost` sign-in behavior, set both `Urls` and `Tray:BrowserUrl` to `http://localhost:5080` (include the trailing slash for `Tray:BrowserUrl`) and restart the service.
 
 `Dashboard:MaximumEventStreamSubscribers` defaults to 64 and is limited to 1-256. `Dashboard:EventStreamHeartbeatSeconds` defaults to 15 seconds and `Dashboard:EventStreamWriteTimeoutSeconds` to 30 seconds; both are limited to 1-120 seconds.
 
