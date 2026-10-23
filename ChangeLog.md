@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.2.11 - 2026-10-22
+
+### Changed
+- Start, Stop, and Restart are available in the tray menu for installed services; non-elevated tray companions request Windows elevation only when an action is selected. Install and Uninstall remain administrator-only.
+- Existing-service controls no longer require the tray companion and service to have matching versions.
+
+### Documentation
+- Documented tray service control, elevation prompts, and the interactive companion's logon startup.
+
 ## 0.2.10 - 2026-10-22
 
 ### Fixed

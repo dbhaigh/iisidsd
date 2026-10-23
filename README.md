@@ -15,7 +15,12 @@
 - IIS site discovery and deny-list inspection
 - Optional IIS deny-list modifications guarded by configuration
 - Browser dashboard with live events, findings, detail, and IIS views
-- Notification-area icon with dashboard launch and service controls
+- Notification-area icon with dashboard launch and service controls that request elevation when needed
+
+## Release 0.2.11 highlights
+
+- Start, Stop, and Restart are enabled for installed services in the tray menu; non-elevated companions prompt for Windows elevation only when the user selects an action.
+- The tray companion can control an installed service even when its version differs; Install and Uninstall remain administrator-only.
 
 ## Release 0.2.10 highlights
 

@@ -136,6 +136,7 @@ public sealed class TrayIconService(
             .Any(arg => string.Equals(arg, "--tray-only", StringComparison.OrdinalIgnoreCase));
         private bool _openDashboardWhenReady;
         private readonly int? _serviceHandoffParentProcessId;
+        private readonly bool _serviceHandoffRequiresVersionMatch;
 
         public TrayApplicationContext(string browserUrl, IHostApplicationLifetime applicationLifetime, ILogger logger)
         {
@@ -146,6 +147,8 @@ public sealed class TrayIconService(
             var suppressDashboardOpen = arguments
                 .Any(arg => string.Equals(arg, "--suppress-dashboard-open", StringComparison.OrdinalIgnoreCase));
             _serviceHandoffParentProcessId = GetServiceHandoffParentProcessId(arguments);
+            _serviceHandoffRequiresVersionMatch = !arguments.Any(arg =>
+                string.Equals(arg, "--service-handoff-allow-version-mismatch", StringComparison.OrdinalIgnoreCase));
             _openDashboardWhenReady = !suppressDashboardOpen &&
                 (_trayOnlyProcess ||
                  (TryGetServiceStatus(out var serviceStatus) &&
@@ -205,9 +208,9 @@ public sealed class TrayIconService(
             var administrator = IsAdministrator();
 
             _installService.Enabled = administrator && !installed;
-            _startService.Enabled = administrator && installed && status == ServiceControllerStatus.Stopped;
-            _stopService.Enabled = administrator && installed && status == ServiceControllerStatus.Running;
-            _restartService.Enabled = administrator && installed && status == ServiceControllerStatus.Running;
+            _startService.Enabled = installed && status == ServiceControllerStatus.Stopped;
+            _stopService.Enabled = installed && status == ServiceControllerStatus.Running;
+            _restartService.Enabled = installed && status == ServiceControllerStatus.Running;
             _uninstallService.Enabled = administrator && installed;
             _ = RefreshDashboardStatusAsync();
         }
@@ -329,7 +332,37 @@ public sealed class TrayIconService(
             => _ = ExecuteServiceOperationAsync("Install service", () => StartServiceWithShutdownAsync("Install service"));
 
         private void StartService()
-            => _ = ExecuteServiceOperationAsync("Start service", () => StartServiceWithShutdownAsync("Start service"));
+            => _ = ExecuteServiceOperationAsync("Start service", StartInstalledServiceAsync);
+
+        private async Task StartInstalledServiceAsync()
+        {
+            if (!TryGetServiceStatus(out _))
+            {
+                ShowResult("Start service", false, "The service is not installed or its status could not be read.");
+                return;
+            }
+
+            if (!_trayOnlyProcess)
+            {
+                if (!await Task.Run(() => LaunchTrayCompanion(Environment.ProcessId, requireVersionMatch: false)))
+                {
+                    ShowResult("Start service", false, "The tray companion could not be started.");
+                    return;
+                }
+
+                _applicationLifetime.StopApplication();
+                return;
+            }
+
+            var started = await RunServiceControlCommandAsync("start");
+            started = started && await WaitForServiceDashboardReadyAsync(
+                TimeSpan.FromSeconds(60),
+                requireVersionMatch: false);
+            ShowResult(
+                "Start service",
+                started,
+                "Approve the Windows elevation prompt if shown, then verify the service and ETW permissions.");
+        }
 
         private async Task StartServiceWithShutdownAsync(string operation)
         {
@@ -341,7 +374,7 @@ public sealed class TrayIconService(
 
             if (_trayOnlyProcess)
             {
-                var started = await Task.Run(StartServiceWithBoundedRetries);
+                var started = await RunServiceControlCommandAsync("start");
                 started = started && await WaitForServiceDashboardReadyAsync(TimeSpan.FromSeconds(60));
                 ShowResult(operation, started, "Run as Administrator and verify ETW trace permissions.");
                 return;
@@ -359,18 +392,145 @@ public sealed class TrayIconService(
         private void StopService()
             => _ = ExecuteServiceOperationAsync("Stop service", async () =>
             {
-                var success = await Task.Run(() => StopServiceAndWait(TimeSpan.FromSeconds(60)));
-                ShowResult("Stop service", success, "Run as Administrator to manage Windows services.");
+                var stopped = await RunServiceControlCommandAsync("stop");
+                var success = stopped &&
+                    await Task.Run(() => WaitForServiceStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(60)));
+                ShowResult(
+                    "Stop service",
+                    success,
+                    "Approve the Windows elevation prompt if shown, then verify the service status.");
             });
 
         private void RestartService()
             => _ = ExecuteServiceOperationAsync("Restart service", async () =>
             {
-                var stopped = await Task.Run(() => StopServiceAndWait(TimeSpan.FromSeconds(60)));
-                var started = stopped && await Task.Run(StartServiceWithBoundedRetries);
-                started = started && await WaitForServiceDashboardReadyAsync(TimeSpan.FromSeconds(60));
-                ShowResult("Restart service", started, "Run as Administrator to manage Windows services.");
+                var restarted = IsAdministrator()
+                    ? await RestartServiceAsAdministratorAsync()
+                    : await RunElevatedRestartCommandAsync();
+                restarted = restarted && await WaitForServiceDashboardReadyAsync(
+                    TimeSpan.FromSeconds(60),
+                    requireVersionMatch: false);
+                ShowResult(
+                    "Restart service",
+                    restarted,
+                    "Approve the Windows elevation prompt if shown, then verify the service and ETW permissions.");
             });
+
+        private async Task<bool> RestartServiceAsAdministratorAsync()
+        {
+            var stopped = await Task.Run(() => StopServiceAndWait(TimeSpan.FromSeconds(60)));
+            return stopped && await Task.Run(StartServiceWithBoundedRetries);
+        }
+
+        private Task<bool> RunElevatedRestartCommandAsync()
+        {
+            var systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            var powerShellPath = Path.Combine(systemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+            const string restartScript =
+                "$ErrorActionPreference = 'Stop'; " +
+                "Restart-Service -Name 'iisidsd' -Force -ErrorAction Stop; " +
+                "(Get-Service -Name 'iisidsd').WaitForStatus(" +
+                "[System.ServiceProcess.ServiceControllerStatus]::Running, " +
+                "[TimeSpan]::FromSeconds(60))";
+
+            return RunElevatedSystemCommandAsync(
+                powerShellPath,
+                "restart",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                restartScript);
+        }
+
+        private async Task<bool> RunServiceControlCommandAsync(string operation)
+        {
+            if (IsAdministrator())
+            {
+                return await Task.Run(() => RunScCommand(operation, ServiceName));
+            }
+
+            var scPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.System),
+                "sc.exe");
+            return await RunElevatedSystemCommandAsync(scPath, operation, operation, ServiceName);
+        }
+
+        private async Task<bool> RunElevatedSystemCommandAsync(
+            string executablePath,
+            string operation,
+            params string[] arguments)
+        {
+            try
+            {
+                var startInfo = new ProcessStartInfo(executablePath)
+                {
+                    UseShellExecute = true,
+                    Verb = "runas",
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                    WorkingDirectory = Path.GetDirectoryName(executablePath) ?? AppContext.BaseDirectory
+                };
+                foreach (var argument in arguments)
+                {
+                    startInfo.ArgumentList.Add(argument);
+                }
+
+                using var process = Process.Start(startInfo);
+                if (process is null)
+                {
+                    _logger.LogError("Unable to launch elevated Windows service operation {Operation}.", operation);
+                    return false;
+                }
+
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+                try
+                {
+                    await process.WaitForExitAsync(timeout.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    try
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                    catch (InvalidOperationException)
+                    {
+                    }
+                    catch (Win32Exception exception)
+                    {
+                        _logger.LogWarning(exception, "Unable to stop timed-out elevated service operation {Operation}.", operation);
+                    }
+
+                    _logger.LogError("Elevated Windows service operation {Operation} timed out.", operation);
+                    return false;
+                }
+
+                if (process.ExitCode == 0)
+                {
+                    return true;
+                }
+
+                _logger.LogWarning(
+                    "Elevated Windows service operation {Operation} failed with exit code {ExitCode}.",
+                    operation,
+                    process.ExitCode);
+                return false;
+            }
+            catch (Win32Exception exception) when (exception.NativeErrorCode == 1223)
+            {
+                _logger.LogInformation("The user cancelled elevation for Windows service operation {Operation}.", operation);
+                return false;
+            }
+            catch (Win32Exception exception)
+            {
+                _logger.LogError(exception, "Unable to launch elevated Windows service operation {Operation}.", operation);
+                return false;
+            }
+            catch (InvalidOperationException exception)
+            {
+                _logger.LogError(exception, "Unable to run elevated Windows service operation {Operation}.", operation);
+                return false;
+            }
+        }
 
         private bool StopServiceAndWait(TimeSpan timeout)
         {
@@ -809,7 +969,7 @@ public sealed class TrayIconService(
             }
         }
 
-        private bool LaunchTrayCompanion(int parentProcessId)
+        private bool LaunchTrayCompanion(int parentProcessId, bool requireVersionMatch = true)
         {
             var processPath = ResolveServiceProcessPath();
             if (string.IsNullOrWhiteSpace(processPath))
@@ -828,6 +988,11 @@ public sealed class TrayIconService(
                 startInfo.ArgumentList.Add("--tray-only");
                 startInfo.ArgumentList.Add("--suppress-dashboard-open");
                 startInfo.ArgumentList.Add($"--service-handoff-pid={parentProcessId}");
+                if (!requireVersionMatch)
+                {
+                    startInfo.ArgumentList.Add("--service-handoff-allow-version-mismatch");
+                }
+
                 using var process = Process.Start(startInfo);
                 return process is not null;
             }
@@ -848,13 +1013,15 @@ public sealed class TrayIconService(
                 return;
             }
 
-            if (!await Task.Run(EnsureServiceStartRequested))
+            if (!await EnsureServiceStartRequestedAsync())
             {
                 _logger.LogError("Unable to start the iisidsd service after the interactive dashboard closed.");
                 return;
             }
 
-            if (!await WaitForServiceDashboardReadyAsync(TimeSpan.FromSeconds(60)))
+            if (!await WaitForServiceDashboardReadyAsync(
+                    TimeSpan.FromSeconds(60),
+                    _serviceHandoffRequiresVersionMatch))
             {
                 _logger.LogError("The iisidsd service did not serve the complete dashboard after startup.");
             }
@@ -884,7 +1051,7 @@ public sealed class TrayIconService(
             }
         }
 
-        private bool EnsureServiceStartRequested()
+        private async Task<bool> EnsureServiceStartRequestedAsync()
         {
             if (TryGetServiceStatus(out var status) &&
                 status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending)
@@ -892,12 +1059,14 @@ public sealed class TrayIconService(
                 return true;
             }
 
-            return StartServiceWithBoundedRetries() ||
+            return await RunServiceControlCommandAsync("start") ||
                 (TryGetServiceStatus(out status) &&
                  status is ServiceControllerStatus.Running or ServiceControllerStatus.StartPending);
         }
 
-        private async Task<bool> WaitForServiceDashboardReadyAsync(TimeSpan timeout)
+        private async Task<bool> WaitForServiceDashboardReadyAsync(
+            TimeSpan timeout,
+            bool requireVersionMatch = true)
         {
             var deadline = DateTime.UtcNow + timeout;
 
@@ -923,7 +1092,8 @@ public sealed class TrayIconService(
                             using var pageResponse = await _healthClient.GetAsync(dashboardUri);
                             using var scriptResponse = await _healthClient.GetAsync(new Uri(baseUri, "app.js"));
                             using var stylesResponse = await _healthClient.GetAsync(new Uri(baseUri, "site.css"));
-                            if (healthResponse.IsSuccessStatusCode && isReady && isExpectedVersion &&
+                            if (healthResponse.IsSuccessStatusCode && isReady &&
+                                (!requireVersionMatch || isExpectedVersion) &&
                                 pageResponse.IsSuccessStatusCode &&
                                 string.Equals(
                                     pageResponse.Content.Headers.ContentType?.MediaType,

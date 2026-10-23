@@ -23,6 +23,8 @@ Ingestion counters are persisted to SQLite after batches and to an atomically re
 
 ## Health and operational diagnostics
 
+When iisidsd runs as a Windows service, the tray icon is provided by the interactive tray companion, not by the service process in Session 0. Start, Stop, and Restart remain available in the tray menu for an installed service; Windows requests elevation when a non-elevated companion performs one of these actions. Install and Uninstall require an administrator session. The tray companion is configured to start at user logon.
+
 Use `/health/live` for process liveness. It does not query SQLite or depend on ETW. `/health/ready` checks SQLite and, when `IisEtw:Enabled=true`, requires the ETW listener to be in `Listening`. A failed readiness check returns HTTP 503 while liveness remains HTTP 200. `/health` preserves the concise `status` field and adds readiness, SQLite/ETW checks, version, a short revision hash of selected non-secret operational settings, and an operational snapshot. Use liveness for restart policy and readiness for traffic/service availability.
 
 Example responses (timestamps and revision vary):

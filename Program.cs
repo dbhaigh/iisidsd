@@ -33,7 +33,8 @@ var filteredArgs = args
     .Where(arg =>
         !string.Equals(arg, "--tray-only", StringComparison.OrdinalIgnoreCase) &&
         !string.Equals(arg, "--suppress-dashboard-open", StringComparison.OrdinalIgnoreCase) &&
-        !arg.StartsWith("--service-handoff-pid=", StringComparison.OrdinalIgnoreCase))
+        !arg.StartsWith("--service-handoff-pid=", StringComparison.OrdinalIgnoreCase) &&
+        !string.Equals(arg, "--service-handoff-allow-version-mismatch", StringComparison.OrdinalIgnoreCase))
     .ToArray();
 var runWithTray = OperatingSystem.IsWindows() && Environment.UserInteractive;
 var trayOnlyMode = runWithTray &&
