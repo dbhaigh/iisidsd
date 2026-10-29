@@ -117,6 +117,39 @@ public sealed class IisAutoDenyServiceTests
     }
 
     [Fact]
+    public void Apply_HighSeverityEventWithoutHostUsesObservedSiteName()
+    {
+        var denyListService = new FakeIisDenyListService(["Example Site"]);
+        var banCountService = new FakeBanCountService();
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
+        var service = new IisAutoDenyService(
+            denyListService,
+            banCountService,
+            new IisIpAllowList(options),
+            options,
+            NullLogger<IisAutoDenyService>.Instance);
+        var securityEvent = new SecurityEvent(
+            DateTimeOffset.UtcNow,
+            "server01",
+            string.Empty,
+            "GET",
+            "/admin",
+            "203.0.113.71",
+            404,
+            "unit-test",
+            new Dictionary<string, string> { ["s-sitename"] = "Example Site" },
+            IsSuspicious: true,
+            RiskSeverity: "High",
+            RiskIndicators: ["suspicious request URI pattern"]);
+
+        service.Apply(securityEvent);
+
+        Assert.Single(denyListService.Requests);
+        Assert.Empty(denyListService.Requests[0].Domains);
+        Assert.Empty(banCountService.IncrementRequests);
+    }
+
+    [Fact]
     public void Apply_MediumSeverityEvent_DoesNothing()
     {
         var denyListService = new FakeIisDenyListService(["example.test-site"]);

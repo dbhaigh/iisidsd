@@ -206,6 +206,7 @@ Current behavior:
 - retrieve deny-list entries for the selected site
 
 If `appcmd.exe` is unavailable, site discovery and deny-list views will remain empty.
+When discovery returns no sites, check the application logs for the `appcmd` error details. Automatic deny matches the IIS host binding when present and falls back to the exact IIS site name reported by ETW, which supports wildcard bindings without host names.
 
 ## IIS deny-list workflow
 

@@ -17,6 +17,11 @@
 - Browser dashboard with live events, findings, detail, and IIS views
 - Notification-area icon with dashboard launch and service controls that request elevation when needed
 
+## Release 0.2.15 highlights
+
+- IIS ETW normalization recognizes standard W3C field names, allowing High and Critical events to resolve the correct host or observed IIS site for automatic deny actions.
+- IIS site discovery reports `appcmd` failures in application logs and reads site IDs from the actual IIS XML output.
+
 ## Release 0.2.14 highlights
 
 - Fresh installs enable Enforce-mode automatic IIS deny actions; suspicious High and Critical events qualify on severity alone, subject to the IP allow-list and matching IIS site.

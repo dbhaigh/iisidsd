@@ -1,5 +1,15 @@
 # Change Log
 
+## 0.2.15 - 2026-10-29
+
+### Fixed
+- Recognize standard IIS W3C ETW field names so host, client IP, method, path, status, and user-agent values are normalized correctly.
+- Match automatic deny actions to the ETW-reported IIS site when host bindings are wildcard or the event has no host name.
+- Parse IIS site IDs from `SITE.ID` and log actionable details when `appcmd` site discovery fails.
+
+### Documentation
+- Documented automatic deny matching for wildcard host bindings and IIS site-discovery diagnostics.
+
 ## 0.2.14 - 2026-10-22
 
 ### Changed

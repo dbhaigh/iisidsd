@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Xml.Linq;
 using iisidsd.Configuration;
 using iisidsd.Models;
+using iisidsd.Networking;
 using iisidsd.Observability;
 using iisidsd.Storage;
 using Microsoft.Extensions.Options;
@@ -376,6 +377,11 @@ public sealed class IisDenyListService : IIisDenyListService
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(64)
                 .ToArray();
+            var targetSiteName = SiteIdentityNormalizer.GetSiteName(securityEvent?.Properties);
+            if (!IisDenyListWriter.IsValidSiteName(targetSiteName))
+            {
+                targetSiteName = string.Empty;
+            }
             RecordAction(actor, "add", "*", normalizedIp, reason, "requested", policy, GetExpiryTime());
 
             if (IsAllowListed(normalizedIp, actor, "add", "*", reason, policy, securityEvent, string.Join(", ", targetDomains)))
@@ -397,15 +403,17 @@ public sealed class IisDenyListService : IIisDenyListService
                 return [];
             }
 
-            if (targetDomains.Length == 0)
+            if (targetDomains.Length == 0 && targetSiteName.Length == 0)
             {
                 RecordAction(actor, "add", "*", normalizedIp, reason, "no-target-domains", policy, GetExpiryTime());
                 return [];
             }
 
             var targetSites = _siteDiscoveryService.GetSites()
-                .Where(site => site.Domains.Any(siteDomain => targetDomains.Any(targetDomain =>
-                    string.Equals(IisSiteDiscoveryService.NormalizeDomain(siteDomain), targetDomain, StringComparison.OrdinalIgnoreCase))))
+                .Where(site =>
+                    string.Equals(site.Name, targetSiteName, StringComparison.OrdinalIgnoreCase) ||
+                    site.Domains.Any(siteDomain => targetDomains.Any(targetDomain =>
+                        string.Equals(IisSiteDiscoveryService.NormalizeDomain(siteDomain), targetDomain, StringComparison.OrdinalIgnoreCase))))
                 .Select(site => site.Name)
                 .Where(IisDenyListWriter.IsValidSiteName)
                 .Distinct(StringComparer.OrdinalIgnoreCase)

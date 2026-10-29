@@ -9,6 +9,7 @@ artifacts/iisidsd-0.1.3-standalone-win-x64-republished/iisidsd.exe
 artifacts/iisidsd-0.1.3-standalone-win-x64/iisidsd.exe
 artifacts/iisidsd-0.1.4-standalone-win-x64/iisidsd.exe
 artifacts/*-standalone-win-x64/
+artifacts/release-*/
 artifacts/iisidsd-0.2.11-installed/
 artifacts/*.zip
 artifacts/*.sha256

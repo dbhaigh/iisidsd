@@ -12,13 +12,13 @@ public sealed record EtwEventPayload(
 
 public static class EtwEventNormalizer
 {
-    private static readonly string[] ServerNamePropertyNames = ["scomputername", "ServerName", "ComputerName", "MachineName"];
-    private static readonly string[] DomainPropertyNames = ["cshost", "Host", "HostName", "ssitename", "s-sitename", "SiteName"];
-    private static readonly string[] MethodPropertyNames = ["csmethod", "Method", "HttpMethod", "Verb"];
-    private static readonly string[] PathPropertyNames = ["csuristem", "UriStem", "Path", "RequestPath", "Url"];
-    private static readonly string[] ClientIpPropertyNames = ["cip", "ClientIP", "ClientIp", "RemoteAddress", "RemoteIp"];
-    private static readonly string[] StatusCodePropertyNames = ["scstatus", "HttpStatus", "StatusCode", "Status"];
-    private static readonly string[] UserAgentPropertyNames = ["csUserAgent", "UserAgent", "User-Agent"];
+    private static readonly string[] ServerNamePropertyNames = ["s-computername", "scomputername", "ServerName", "ComputerName", "MachineName"];
+    private static readonly string[] DomainPropertyNames = ["cs-host", "cshost", "Host", "HostName"];
+    private static readonly string[] MethodPropertyNames = ["cs-method", "csmethod", "Method", "HttpMethod", "Verb"];
+    private static readonly string[] PathPropertyNames = ["cs-uri-stem", "csuristem", "UriStem", "Path", "RequestPath", "Url"];
+    private static readonly string[] ClientIpPropertyNames = ["c-ip", "cip", "ClientIP", "ClientIp", "RemoteAddress", "RemoteIp"];
+    private static readonly string[] StatusCodePropertyNames = ["sc-status", "scstatus", "HttpStatus", "StatusCode", "Status"];
+    private static readonly string[] UserAgentPropertyNames = ["cs(User-Agent)", "csUserAgent", "UserAgent", "User-Agent"];
 
     public static bool TryNormalize(EtwEventPayload payload, out SecurityEvent? webEvent, out string failureCode)
     {

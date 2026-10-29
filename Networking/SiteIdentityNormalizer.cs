@@ -103,7 +103,7 @@ internal static class SiteIdentityNormalizer
         return normalizedServer.Length > 0;
     }
 
-    private static string GetSiteName(IReadOnlyDictionary<string, string>? properties)
+    internal static string GetSiteName(IReadOnlyDictionary<string, string>? properties)
     {
         if (properties is null)
         {

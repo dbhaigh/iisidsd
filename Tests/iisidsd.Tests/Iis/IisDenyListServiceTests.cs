@@ -60,6 +60,37 @@ public sealed class IisDenyListServiceTests
     }
 
     [Fact]
+    public void AddDeniedIpToDomains_MatchesObservedSiteNameWhenBindingHasNoHostName()
+    {
+        var options = Options.Create(new IisAdminOptions { EnableDenyListChanges = true, DryRun = false });
+        var store = new FakeDenyListStore();
+        var site = new IisSiteInfo(1, "Example Site", "Started", ["http/*:80:"], []);
+        var siteDiscovery = new FakeSiteDiscoveryService(sites: [site]);
+        var writer = new FakeIisDenyListWriter();
+        var service = CreateService(options, store, siteDiscovery, denyListWriter: writer);
+        var securityEvent = new SecurityEvent(
+            DateTimeOffset.UtcNow,
+            "server01",
+            "www.example.test",
+            "GET",
+            "/",
+            "203.0.113.23",
+            200,
+            "unit-test",
+            new Dictionary<string, string> { ["s-sitename"] = "Example Site" });
+
+        var updatedSites = service.AddDeniedIpToDomains(
+            securityEvent.ClientIp,
+            [securityEvent.Domain],
+            "system:auto-deny",
+            "suspicious request",
+            securityEvent);
+
+        Assert.Equal(["Example Site"], updatedSites);
+        Assert.Equal(1, writer.EnsureCalls);
+    }
+
+    [Fact]
     public void AddDeniedIp_AllowListedAddressIsSkippedAndAudited()
     {
         var options = Options.Create(new IisAdminOptions
@@ -447,7 +478,9 @@ public sealed class IisDenyListServiceTests
             observability);
     }
 
-    private sealed class FakeSiteDiscoveryService(bool throwOnGetSites = false) : IIisSiteDiscoveryService
+    private sealed class FakeSiteDiscoveryService(
+        bool throwOnGetSites = false,
+        IReadOnlyList<IisSiteInfo>? sites = null) : IIisSiteDiscoveryService
     {
         public int GetSitesCalls { get; private set; }
 
@@ -459,7 +492,7 @@ public sealed class IisDenyListServiceTests
                 throw new InvalidOperationException("Site discovery must not run during a dry run.");
             }
 
-            return [];
+            return sites ?? [];
         }
 
         public IisSiteInfo? FindSiteByDomain(string domain) => null;

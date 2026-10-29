@@ -3,25 +3,32 @@ using iisidsd.Models;
 
 namespace iisidsd.Iis;
 
-public sealed class IisSiteDiscoveryService(ILogger<IisSiteDiscoveryService> logger) : IIisSiteDiscoveryService
+public sealed class IisSiteDiscoveryService(
+    ILogger<IisSiteDiscoveryService> logger,
+    IAppCmdRunner appCmdRunner) : IIisSiteDiscoveryService
 {
-    private readonly AppCmdRunner _appCmd = new(logger);
-
     public IReadOnlyList<IisSiteInfo> GetSites()
     {
-        var result = _appCmd.Run("list", "site", "/xml");
-        if (!result.Success || string.IsNullOrWhiteSpace(result.Output))
+        var result = appCmdRunner.Run("list", "site", "/xml");
+        if (!result.Success)
         {
+            logger.LogWarning("Unable to discover IIS sites using appcmd. Error={AppCmdError}", result.Error);
+            return [];
+        }
+
+        if (string.IsNullOrWhiteSpace(result.Output))
+        {
+            logger.LogWarning("IIS site discovery returned no output from appcmd.");
             return [];
         }
 
         var document = XDocument.Parse(result.Output);
-        return document.Descendants("SITE")
+        var sites = document.Descendants("SITE")
             .Select(site =>
             {
                 var bindings = ParseBindings((string?)site.Attribute("bindings"));
                 return new IisSiteInfo(
-                    ParseLong((string?)site.Attribute("id")),
+                    ParseLong((string?)site.Attribute("SITE.ID") ?? (string?)site.Attribute("id")),
                     (string?)site.Attribute("SITE.NAME") ?? string.Empty,
                     (string?)site.Attribute("state") ?? string.Empty,
                     bindings,
@@ -34,6 +41,13 @@ public sealed class IisSiteDiscoveryService(ILogger<IisSiteDiscoveryService> log
             .Where(static site => !string.IsNullOrWhiteSpace(site.Name))
             .OrderBy(static site => site.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+
+        if (sites.Length == 0)
+        {
+            logger.LogInformation("IIS site discovery completed, but appcmd returned no configured sites.");
+        }
+
+        return sites;
     }
 
     public IisSiteInfo? FindSiteByDomain(string domain)

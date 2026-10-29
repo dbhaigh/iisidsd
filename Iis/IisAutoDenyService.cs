@@ -1,5 +1,6 @@
 using iisidsd.Configuration;
 using iisidsd.Models;
+using iisidsd.Networking;
 using iisidsd.Observability;
 using iisidsd.Services;
 using Microsoft.Extensions.Options;
@@ -33,16 +34,20 @@ public sealed class IisAutoDenyService(
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(securityEvent.ClientIp) || string.IsNullOrWhiteSpace(securityEvent.Domain))
+        var targetSiteName = SiteIdentityNormalizer.GetSiteName(securityEvent.Properties);
+        var hasDomain = !string.IsNullOrWhiteSpace(securityEvent.Domain);
+        if (string.IsNullOrWhiteSpace(securityEvent.ClientIp) ||
+            (!hasDomain && !IisDenyListWriter.IsValidSiteName(targetSiteName)))
         {
             return;
         }
 
         var reason = $"{securityEvent.DetectionReason ?? "Suspicious activity"}; indicators: {string.Join(", ", distinctIndicators)}";
         var allowListed = ipAllowList.Contains(securityEvent.ClientIp);
+        string[] domains = hasDomain ? [securityEvent.Domain] : [];
         var updatedSites = denyListService.AddDeniedIpToDomains(
             securityEvent.ClientIp,
-            [securityEvent.Domain],
+            domains,
             "system:auto-deny",
             reason,
             securityEvent);
@@ -65,14 +70,19 @@ public sealed class IisAutoDenyService(
         if (updatedSites.Count == 0)
         {
             logger.LogWarning(
-                "Automatic deny-list update found no matching IIS sites. RiskScore={RiskScore} RiskSeverity={RiskSeverity}",
+                "Automatic deny-list update found no matching IIS sites. Domain={Domain} SiteName={SiteName} RiskScore={RiskScore} RiskSeverity={RiskSeverity}",
+                securityEvent.Domain,
+                targetSiteName,
                 securityEvent.RiskScore,
                 securityEvent.RiskSeverity);
             return;
         }
 
         _observability.RecordAutoDeny();
-        banCountService.IncrementBanCounts(securityEvent.ClientIp, [securityEvent.Domain]);
+        if (hasDomain)
+        {
+            banCountService.IncrementBanCounts(securityEvent.ClientIp, [securityEvent.Domain]);
+        }
 
         logger.LogInformation(
             "Automatic deny-list action applied to {SiteCount} IIS site(s). RiskScore={RiskScore} RiskSeverity={RiskSeverity}",
