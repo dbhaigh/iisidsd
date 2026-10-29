@@ -58,9 +58,9 @@ jobs:
         shell: pwsh
         run: |
           $publishDir = Join-Path $env:RUNNER_TEMP 'iisidsd-publish'
-          dotnet restore iisidsd.csproj -p:RuntimeIdentifier=win-x64 -p:NuGetAuditLevel=low -warnaserror
+          dotnet restore iisidsd.csproj --runtime win-x64 -p:SelfContained=true -p:NuGetAuditLevel=low -warnaserror
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet publish iisidsd.csproj --no-restore --configuration Release -p:PublishProfile=StandaloneWinX64 "-p:PublishDir=$publishDir\" -warnaserror
+          dotnet publish iisidsd.csproj --no-restore --configuration Release --runtime win-x64 --self-contained true -p:PublishProfile=StandaloneWinX64 "-p:PublishDir=$publishDir\" -warnaserror
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path (Join-Path $publishDir 'iisidsd.exe'))) { throw 'Standalone executable was not published.' }
           if (-not (Test-Path (Join-Path $publishDir 'appsettings.json'))) { throw 'Runtime settings were not published.' }
